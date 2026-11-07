@@ -160,5 +160,13 @@ jobs:
           # https://github.com/containers/container-libs/issues/388
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
+          # Cosign 3 does not accept an unencrypted PKCS#8 "PRIVATE KEY"
+          # directly. Convert it to the supported traditional EC PEM format in
+          # an ephemeral file without printing the key to the workflow log.
+          key_file="$(mktemp)"
+          trap 'rm -f "${key_file}"' EXIT
+          printf '%s' "${COSIGN_PRIVATE_KEY}" | openssl pkey -traditional -out "${key_file}"
+          chmod 0600 "${key_file}"
+
+          cosign sign -y --new-bundle-format=false --use-signing-config=false --key "${key_file}" ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
