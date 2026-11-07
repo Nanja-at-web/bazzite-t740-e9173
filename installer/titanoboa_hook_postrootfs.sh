@@ -10,6 +10,54 @@ dnf -qy versionlock clear
 # Install Anaconda
 dnf install -qy --enable-repo=fedora-cisco-openh264 --allowerasing firefox anaconda-live libblockdev-{btrfs,lvm,dm}
 
+# Canonicalize the target root before systemd-tmpfiles performs SELinux relabeling.
+# On the live image /mnt resolves to /var/mnt. Passing the unresolved path makes
+# tmpfiles reject /mnt/sysroot/var/home as outside its canonical /var/mnt/sysroot.
+# Keep SELinux labeling and fatal-error handling enabled.
+python3 - <<'PY'
+import ast
+import os
+from pathlib import Path
+import tempfile
+
+import pyanaconda
+
+module = Path(pyanaconda.__file__).parent / "modules/payloads/payload/rpm_ostree/installation.py"
+source = module.read_text()
+old = '"--root=" + self._sysroot,'
+new = '"--root=" + os.path.realpath(self._sysroot),'
+if source.count(old) != 1 or "import os\n" not in source:
+    raise SystemExit("Unexpected Anaconda source: review the tmpfiles root workaround")
+patched = source.replace(old, new, 1)
+compile(patched, str(module), "exec")
+
+# Exercise the actual patched method without loading Anaconda's GI dependencies.
+tree = ast.parse(patched)
+task = next(node for node in tree.body if isinstance(node, ast.ClassDef)
+            and node.name == "PrepareOSTreeMountTargetsTask")
+method = next(node for node in task.body if isinstance(node, ast.FunctionDef)
+              and node.name == "_create_tmpfiles")
+calls = []
+namespace = {"os": os, "safe_exec_program": lambda *a, **kw: calls.append((a, kw))}
+exec(compile(ast.Module(body=[method], type_ignores=[]), str(module), "exec"), namespace)
+with tempfile.TemporaryDirectory(prefix="anaconda-root-test-") as temporary:
+    base = Path(temporary)
+    real_root = base / "var/mnt/sysroot"
+    real_root.mkdir(parents=True)
+    (base / "mnt").symlink_to(base / "var/mnt", target_is_directory=True)
+    for root in (base / "mnt/sysroot", real_root):
+        target = type("Target", (), {"_sysroot": str(root)})()
+        namespace["_create_tmpfiles"](target, "/var/home")
+        args, kwargs = calls[-1]
+        assert args == ("systemd-tmpfiles", ["--create", "--boot",
+                       "--root=" + str(real_root), "--prefix=/var/home"]), args
+        assert kwargs == {"successful_return_codes": (0, 65)}, kwargs
+
+module.write_text(patched)
+print("Anaconda tmpfiles canonical-root fix applied; symlink and direct-root tests passed")
+PY
+
+
 mkdir -p /var/lib/rpm-state # Needed for Anaconda Web UI
 
 # Utilities for displaying a dialog prompting users to review secure boot documentation
