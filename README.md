@@ -8,14 +8,16 @@ Custom Bazzite Steam Gaming Mode image for an HP t740 with:
 
 ## What this image fixes
 
-The Radeon E9170 family is Polaris-based. Current Gamescope versions can fail
-on this generation, while the Bazzite compatibility binary and SDL backend are
-intended for it. On a two-AMD-GPU system, automatic selection can also choose
-the integrated Vega instead of the E9173 that owns the connected DisplayPort.
+The Radeon E9170 family is Polaris-based. The modern DRM backend can fail on
+this generation, while Gamescope's SDL compatibility backend is intended for
+older GPUs. Current Bazzite no longer ships a separate `gamescope-legacy`
+binary, so this image uses the normal Gamescope binary with the SDL backend.
+On a two-AMD-GPU system, automatic selection can also choose the integrated
+Vega instead of the E9173 that owns the connected DisplayPort.
 
 For the Steam Gaming Mode session this image therefore:
 
-1. uses `/usr/bin/gamescope-legacy`;
+1. uses the current `/usr/bin/gamescope` binary;
 2. selects the SDL compatibility backend;
 3. reads the AMD vendor/device IDs from PCI device `0000:01:00.0` at session
    startup and passes the resulting ID through `VULKAN_ADAPTER`;
@@ -77,7 +79,7 @@ After attempting to enter Gaming Mode, the log should contain a line similar
 to:
 
 ```text
-t740-e9173: using /usr/bin/gamescope-legacy, backend=sdl, adapter=1002:xxxx
+t740-e9173: using /usr/bin/gamescope, backend=sdl, adapter=1002:xxxx
 ```
 
 If the PCI address of the E9173 differs from `01:00.0`, change

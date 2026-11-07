@@ -5,9 +5,10 @@ set -ouex pipefail
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
-# Fail the image build if the selected Bazzite base ever stops shipping the
-# compatibility compositor required by the E9170/Polaris generation.
-test -x /usr/bin/gamescope-legacy
+# Fail the image build if the selected Bazzite base does not provide Gamescope.
+# Current Bazzite uses the regular binary with the SDL compatibility backend;
+# the separate gamescope-legacy executable was removed upstream.
+test -x /usr/bin/gamescope
 
 # The session fragment is sourced by gamescope-session-plus. Keep it readable
 # and make the diagnostics helper directly executable.
