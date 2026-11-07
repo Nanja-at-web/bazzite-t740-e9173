@@ -2,6 +2,11 @@
 name: Build HP t740 installer ISO
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'installer/**'
+      - '.github/workflows/build-disk.yml'
   workflow_dispatch:
 
 permissions: {}
