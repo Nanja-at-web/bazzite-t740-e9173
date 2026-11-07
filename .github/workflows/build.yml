@@ -157,16 +157,26 @@ jobs:
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           DIGEST: ${{ steps.push-image.outputs.digest }}
         run: |
+          set -euo pipefail
           # https://github.com/containers/container-libs/issues/388
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          # Cosign 3 does not accept an unencrypted PKCS#8 "PRIVATE KEY"
-          # directly. Convert it to the supported traditional EC PEM format in
-          # an ephemeral file without printing the key to the workflow log.
-          key_file="$(mktemp)"
-          trap 'rm -f "${key_file}"' EXIT
-          printf '%s' "${COSIGN_PRIVATE_KEY}" | openssl pkey -traditional -out "${key_file}"
-          chmod 0600 "${key_file}"
+          # Import the existing unencrypted PKCS#8 secret into Cosign's native
+          # encrypted key container. The conversion happens only in a private
+          # temporary directory and the source key is never printed.
+          umask 077
+          key_dir="$(mktemp -d)"
+          trap 'rm -rf "${key_dir}"' EXIT
+          printf '%s' "${COSIGN_PRIVATE_KEY}" > "${key_dir}/source.key"
 
-          cosign sign -y --new-bundle-format=false --use-signing-config=false --key "${key_file}" ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
+          (
+            cd "${key_dir}"
+            COSIGN_PASSWORD="" cosign import-key-pair --key source.key
+          )
+
+          COSIGN_PASSWORD="" cosign sign -y \
+            --new-bundle-format=false \
+            --use-signing-config=false \
+            --key "${key_dir}/import-cosign.key" \
+            ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
 
