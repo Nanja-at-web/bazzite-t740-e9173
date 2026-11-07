@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+
+set -u
+
+dgpu_path=/sys/bus/pci/devices/0000:01:00.0
+
+echo "== Bazzite deployment =="
+bootc status 2>&1 || true
+
+echo
+echo "== Display controllers =="
+lspci -nnk | grep -A3 -E 'VGA compatible|3D controller|Display controller' || true
+
+echo
+echo "== E9173 slot 01:00.0 =="
+for field in vendor device class; do
+	if [[ -r "${dgpu_path}/${field}" ]]; then
+		printf '%-8s ' "${field}:"
+		cat "${dgpu_path}/${field}"
+	fi
+done
+
+if [[ -L "${dgpu_path}/driver" ]]; then
+	printf '%-8s %s\n' 'driver:' "$(basename "$(readlink -f "${dgpu_path}/driver")")"
+fi
+
+echo
+echo "== Gamescope binaries =="
+for binary in /usr/bin/gamescope /usr/bin/gamescope-legacy; do
+	if [[ -x "${binary}" ]]; then
+		printf '%s: ' "${binary}"
+		"${binary}" --version 2>&1 | head -n 1
+	else
+		echo "${binary}: missing"
+	fi
+done
+
+echo
+echo "== DRM connector state =="
+grep -H . /sys/class/drm/card*-*/status 2>/dev/null || true
+
+echo
+echo "== Current Gamescope process =="
+pgrep -a gamescope || true
+gamescope_pid="$(pgrep -o gamescope 2>/dev/null || true)"
+if [[ -n "${gamescope_pid}" ]]; then
+	readlink -f "/proc/${gamescope_pid}/exe" || true
+fi
+
+echo
+echo "== Current-boot graphics log (last 200 matching lines) =="
+journalctl -b --no-pager 2>/dev/null \
+	| grep -Ei 'gamescope|amdgpu|vulkan|drm|t740-e9173' \
+	| tail -n 200 || true

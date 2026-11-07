@@ -1,6 +1,93 @@
-# image-template
+# Bazzite HP t740 / Radeon E9173
 
-This repository is meant to be a template for building your own custom [bootc](https://github.com/bootc-dev/bootc) image. This template is the recommended way to make customizations to any image published by the Universal Blue Project.
+Custom Bazzite Steam Gaming Mode image for an HP t740 with:
+
+- AMD Ryzen Embedded V1756B with integrated Vega graphics
+- AMD Embedded Radeon E9173 at PCI address `0000:01:00.0`
+- the monitor connected directly to the E9173 DisplayPort output
+
+## What this image fixes
+
+The Radeon E9170 family is Polaris-based. Current Gamescope versions can fail
+on this generation, while the Bazzite compatibility binary and SDL backend are
+intended for it. On a two-AMD-GPU system, automatic selection can also choose
+the integrated Vega instead of the E9173 that owns the connected DisplayPort.
+
+For the Steam Gaming Mode session this image therefore:
+
+1. uses `/usr/bin/gamescope-legacy`;
+2. selects the SDL compatibility backend;
+3. reads the AMD vendor/device IDs from PCI device `0000:01:00.0` at session
+   startup and passes the resulting ID through `VULKAN_ADAPTER`;
+4. leaves KDE Plasma and the integrated Vega available for recovery and normal
+   desktop use.
+
+The override is scoped to the Steam Gamescope session in
+`/etc/gamescope-session-plus/sessions.d/steam`. It does not disable either GPU.
+
+## Build on GitHub
+
+1. Create a new repository named `bazzite-t740-e9173` from
+   `ublue-os/image-template` or upload the files from this repository.
+2. If the repository owner is not `Nanja-at-web`, update
+   `REPO_ORGANIZATION` in `image-template.env`.
+3. Generate a signing key in the repository directory:
+
+   ```bash
+   COSIGN_PASSWORD="" cosign generate-key-pair
+   ```
+
+4. Commit `cosign.pub`. Never commit `cosign.key`.
+5. In GitHub, create the Actions secret `SIGNING_SECRET` containing the complete
+   contents of `cosign.key`.
+6. Enable GitHub Actions and run **Build container image**.
+
+The workflow publishes:
+
+```text
+ghcr.io/<repository-owner>/bazzite-t740-e9173:latest
+```
+
+## Install on the existing Bazzite system
+
+After the GitHub build succeeds, run:
+
+```bash
+sudo bootc switch --transport registry ghcr.io/<repository-owner>/bazzite-t740-e9173:latest
+sudo systemctl reboot
+```
+
+Keep at least one known-good Bazzite deployment until Gaming Mode has been
+tested. To return to the previous deployment:
+
+```bash
+sudo bootc rollback
+sudo systemctl reboot
+```
+
+## Verify the fix
+
+From KDE Desktop Mode, run:
+
+```bash
+t740-gpu-diagnostics
+```
+
+After attempting to enter Gaming Mode, the log should contain a line similar
+to:
+
+```text
+t740-e9173: using /usr/bin/gamescope-legacy, backend=sdl, adapter=1002:xxxx
+```
+
+If the PCI address of the E9173 differs from `01:00.0`, change
+`t740_dgpu_path` in
+`system_files/etc/gamescope-session-plus/sessions.d/steam` before building.
+
+## Upstream image-template documentation
+
+This repository is based on the recommended Universal Blue template for custom
+[bootc](https://github.com/bootc-dev/bootc) images.
 
 # Community
 

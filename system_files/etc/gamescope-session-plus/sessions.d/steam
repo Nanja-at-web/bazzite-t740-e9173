@@ -1,0 +1,21 @@
+# HP t740 with an AMD Embedded Radeon E9173 in PCI slot 01:00.0.
+#
+# The E9170 family is Polaris-based and needs Bazzite's legacy Gamescope build
+# with the SDL compatibility backend. The Vulkan adapter is derived from sysfs
+# so this image does not depend on a guessed PCI device ID.
+
+t740_dgpu_path=/sys/bus/pci/devices/0000:01:00.0
+
+if [[ -r "${t740_dgpu_path}/vendor" && -r "${t740_dgpu_path}/device" ]]; then
+	read -r t740_dgpu_vendor <"${t740_dgpu_path}/vendor"
+	read -r t740_dgpu_device <"${t740_dgpu_path}/device"
+
+	if [[ "${t740_dgpu_vendor}" == "0x1002" ]]; then
+		export GAMESCOPE_BIN=/usr/bin/gamescope-legacy
+		export BACKEND=sdl
+		export VULKAN_ADAPTER="${t740_dgpu_vendor#0x}:${t740_dgpu_device#0x}"
+		echo "t740-e9173: using ${GAMESCOPE_BIN}, backend=${BACKEND}, adapter=${VULKAN_ADAPTER}" >&2
+	fi
+fi
+
+unset t740_dgpu_path t740_dgpu_vendor t740_dgpu_device
