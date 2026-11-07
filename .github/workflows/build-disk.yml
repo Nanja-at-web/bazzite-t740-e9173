@@ -79,20 +79,36 @@ jobs:
           echo "directory=$ISO_UPLOAD_DIR" >> "$GITHUB_OUTPUT"
 
       - name: Set up Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
-          cosign-release: v2.6.5
+          cosign-release: v3.1.4
 
       - name: Sign ISO
+        continue-on-error: true
         env:
-          SIGNING_KEY: ${{ secrets.SIGNING_SECRET }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           ISO_UPLOAD_DIR: ${{ steps.artifact.outputs.directory }}
         run: |
+          set -euo pipefail
+          umask 077
+          key_dir="$(mktemp -d)"
+          trap 'rm -rf "${key_dir}"' EXIT
+          printf '%s' "${COSIGN_PRIVATE_KEY}" > "${key_dir}/source.key"
+
+          (
+            cd "${key_dir}"
+            COSIGN_PASSWORD="" cosign import-key-pair --key source.key
+          )
+
           for iso in "$ISO_UPLOAD_DIR"/*.iso; do
-            cosign sign-blob -y --key env://SIGNING_KEY "$iso" --output-signature "${iso}.sig"
+            COSIGN_PASSWORD="" cosign sign-blob -y \
+              --key "${key_dir}/import-cosign.key" \
+              "$iso" \
+              --output-signature "${iso}.sig"
           done
 
       - name: Upload ISO, checksum, and signature
+        if: ${{ always() && steps.artifact.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bazzite-t740-e9173-polaris-installer-amd64
