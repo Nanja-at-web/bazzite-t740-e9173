@@ -40,7 +40,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        disk-type: ["qcow2", "anaconda-iso"]
+        # This repository publishes the bootable installer ISO for the HP t740.
+        # Avoid spending runner time and artifact storage on an unused QCOW2 image.
+        disk-type: ["anaconda-iso"]
     permissions:
       contents: read
       packages: read
@@ -92,6 +94,7 @@ jobs:
         if: inputs.upload-to-s3 != true && github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          name: bazzite-t740-e9173-installer-${{ inputs.platform }}
           path: ${{ steps.build.outputs.output-directory }}
           if-no-files-found: error
           retention-days: 0
