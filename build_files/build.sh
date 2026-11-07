@@ -12,4 +12,4 @@ test -x /usr/bin/gamescope-legacy
 # The session fragment is sourced by gamescope-session-plus. Keep it readable
 # and make the diagnostics helper directly executable.
 chmod 0644 /etc/gamescope-session-plus/sessions.d/steam
-chmod 0755 /usr/local/bin/t740-gpu-diagnostics
+chmod 0755 /usr/bin/t740-gpu-diagnostics
