@@ -8,10 +8,10 @@ this branch, and the installed hardware-validated build #4 is unaffected.
 - OS version: actual `/usr/lib/os-release` fields, for example `VERSION_ID=45`.
 - Upstream build: the locked Bazzite image version, currently `45.20261105`.
 - Custom build: `<Bazzite version>.<custom revision>-polaris-sdl`, currently
-  `45.20261105.1-polaris-sdl`.
+  `45.20261105.2-polaris-sdl`.
 - Image digest: immutable registry manifest reference from `image-lock.json`.
 
-The human-readable form is `Bazzite 45.20261105.1 (Polaris SDL)`. The hardware
+The human-readable form is `Bazzite 45.20261105.2 (Polaris SDL)`. The hardware
 target stays in the repository, container and ISO names, not in the version.
 The source commit remains a separate provenance field. Local container builds
 from a dirty Git checkout are rejected rather than creating a second version
@@ -38,7 +38,8 @@ Refresh explicitly with `python3 scripts/lock-images.py`, review the diff and
 commit it. This only queries registry metadata; it does not build anything.
 The initial lock is a development snapshot, **not** a recovered build #4 lock.
 Each resolved entry also records its OCI version label. The currently locked
-legacy custom payload has no such label, so its version is explicitly `null`.
+payload remains the published revision `45.20261105.1-polaris-sdl` until the
+new revision is built, verified and pinned by digest.
 
 Building a new system container does not automatically change the pinned ISO
 payload. After validating the published container, update `install_payload` to
@@ -50,10 +51,29 @@ new validated digest requires an explicit bootc switch/update of the origin.
 
 The ISO workflow refuses to build unless the locked payload has a valid custom
 version matching the version derived from the locked Bazzite base. Therefore
-the present legacy payload lock intentionally cannot produce a newly versioned
+the present revision-1 payload lock intentionally cannot produce a revision-2
 ISO. After a validated container is published and the lock is refreshed, the
-ISO name will be, for example,
-`bazzite-t740-e9173-45.20261105.1-polaris-sdl-amd64.iso`.
+ISO name will be
+`bazzite-t740-e9173-45.20261105.2-polaris-sdl-amd64.iso`.
+
+## Reproducible container release controls
+
+The container creation time and `SOURCE_DATE_EPOCH` are derived from the Git
+commit timestamp, not the wall clock of the GitHub runner. Rebuilding the same
+commit with the same locked inputs therefore supplies the same timestamp to
+Podman and the image build script. This removes one known source of needless
+digest changes; complete byte-for-byte reproducibility still depends on the
+base image and the behavior of all build tools.
+
+Before any container build starts, the workflow queries GHCR and fails closed
+if the version tag already exists. A release tag such as
+`45.20261105.2-polaris-sdl` is therefore immutable and cannot silently be moved
+to another digest. Mutable convenience aliases are only published together
+with a previously unused version tag.
+
+The container workflow has no scheduled trigger. It runs for pull requests,
+pushes to `main`, or explicit manual dispatch. The ISO workflow remains
+manual-only and is not started by a container build.
 
 The lock does not make an ISO byte-for-byte reproducible: installer DNF repos,
 Flatpak remotes, timestamps and build tools can still change. Package/tool locks

@@ -106,12 +106,14 @@ build $target_image=image_name $tag=default_tag:
     fi
     BASE_IMAGE=$(jq -er '.container_base.image | select(test("@sha256:[0-9a-f]{64}$"))' image-lock.json)
     T740_REVISION=$(git rev-parse HEAD)
-    T740_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    T740_CREATED=$(python3 scripts/build-created.py --format rfc3339)
+    SOURCE_DATE_EPOCH=$(python3 scripts/build-created.py --format epoch)
     T740_BUILD_ID=$(python3 scripts/build-version.py)
     BUILD_ARGS+=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
     BUILD_ARGS+=(--build-arg "T740_BUILD_ID=${T740_BUILD_ID}")
     BUILD_ARGS+=(--build-arg "T740_REVISION=${T740_REVISION}")
     BUILD_ARGS+=(--build-arg "T740_CREATED=${T740_CREATED}")
+    BUILD_ARGS+=(--build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}")
     GIT_SHA=$(git rev-parse --short HEAD)
     LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
     LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
@@ -126,7 +128,7 @@ build $target_image=image_name $tag=default_tag:
     LABELS+=("--label" "io.artifacthub.package.license=Apache-2.0")
     LABELS+=("--label" "io.artifacthub.package.logo-url={{ image_logo_url }}")
     LABELS+=("--label" "io.artifacthub.package.prerelease=false")
-    LABELS+=("--label" "org.opencontainers.image.created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)")
+    LABELS+=("--label" "org.opencontainers.image.created=${T740_CREATED}")
     LABELS+=("--label" "org.opencontainers.image.description={{ image_desc }}")
     LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
@@ -134,7 +136,7 @@ build $target_image=image_name $tag=default_tag:
     # This actually builds the image!
     PODMAN_BUILD_ARGS=("${BUILD_ARGS[@]}" "${LABELS[@]}" --pull=newer --tag "${target_image}:${tag}" --file Containerfile)
 
-    podman build "${PODMAN_BUILD_ARGS[@]}" .
+    SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" podman build "${PODMAN_BUILD_ARGS[@]}" .
 
 # Split the image for smaller updates (New)!
 rechunk $target_image=image_name $tag=default_tag:
@@ -222,7 +224,7 @@ generate-build-tags $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
     set -eoux pipefail
 
-    DATE=$(date +%Y%m%d)
+    DATE=$(python3 scripts/build-created.py --format rfc3339 | cut -c1-10 | tr -d '-')
     T740_BUILD_ID=$(python3 scripts/build-version.py)
     BUILD_TAGS=()
     if [[ -z "$(git status -s)" ]]; then

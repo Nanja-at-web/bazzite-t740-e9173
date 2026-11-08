@@ -13,6 +13,7 @@ ARG BASE_IMAGE
 ARG T740_BUILD_ID
 ARG T740_REVISION
 ARG T740_CREATED
+ARG SOURCE_DATE_EPOCH
 LABEL org.opencontainers.image.version=${T740_BUILD_ID} \
       org.opencontainers.image.revision=${T740_REVISION} \
       org.opencontainers.image.created=${T740_CREATED} \
@@ -47,7 +48,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
     env BASE_IMAGE="$BASE_IMAGE" T740_BUILD_ID="$T740_BUILD_ID" \
-    T740_REVISION="$T740_REVISION" T740_CREATED="$T740_CREATED" /ctx/build.sh
+    T740_REVISION="$T740_REVISION" T740_CREATED="$T740_CREATED" \
+    SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" /ctx/build.sh
 
 ### LINTING
 ## Verify final image and contents are correct.
