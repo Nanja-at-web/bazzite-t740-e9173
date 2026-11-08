@@ -3,12 +3,20 @@
 These changes are prepared on a development branch. No ISO is built by pushing
 this branch, and the installed hardware-validated build #4 is unaffected.
 
-## Three independent identifiers
+## Version syntax and independent identifiers
 
 - OS version: actual `/usr/lib/os-release` fields, for example `VERSION_ID=45`.
-- Custom build: timestamp/source based ID for the system, or workflow run/source
-  based ID for the installer. A dirty local checkout is explicitly marked.
+- Upstream build: the locked Bazzite image version, currently `45.20261105`.
+- Custom build: `<Bazzite version>.<custom revision>-polaris-sdl`, currently
+  `45.20261105.1-polaris-sdl`.
 - Image digest: immutable registry manifest reference from `image-lock.json`.
+
+The human-readable form is `Bazzite 45.20261105.1 (Polaris SDL)`. The hardware
+target stays in the repository, container and ISO names, not in the version.
+The source commit remains a separate provenance field. Local container builds
+from a dirty Git checkout are rejected rather than creating a second version
+syntax. `build-version.json` controls the custom revision and variant;
+`scripts/build-version.py` combines it with the locked upstream version.
 
 `/usr/share/t740/build-info.json` lives in the image filesystem, so its provenance
 survives rootfs-based OCI rechunking even if that operation drops OCI labels.
@@ -29,6 +37,8 @@ date; no OS version is guessed from the live installer.
 Refresh explicitly with `python3 scripts/lock-images.py`, review the diff and
 commit it. This only queries registry metadata; it does not build anything.
 The initial lock is a development snapshot, **not** a recovered build #4 lock.
+Each resolved entry also records its OCI version label. The currently locked
+legacy custom payload has no such label, so its version is explicitly `null`.
 
 Building a new system container does not automatically change the pinned ISO
 payload. After validating the published container, update `install_payload` to
@@ -37,6 +47,13 @@ both for its local OSTree payload and for the installed bootc origin, avoiding
 an implicit switch to a newer `latest` during installation. Consequently,
 automatic system updates do not advance beyond that pinned origin. Moving to a
 new validated digest requires an explicit bootc switch/update of the origin.
+
+The ISO workflow refuses to build unless the locked payload has a valid custom
+version matching the version derived from the locked Bazzite base. Therefore
+the present legacy payload lock intentionally cannot produce a newly versioned
+ISO. After a validated container is published and the lock is refreshed, the
+ISO name will be, for example,
+`bazzite-t740-e9173-45.20261105.1-polaris-sdl-amd64.iso`.
 
 The lock does not make an ISO byte-for-byte reproducible: installer DNF repos,
 Flatpak remotes, timestamps and build tools can still change. Package/tool locks

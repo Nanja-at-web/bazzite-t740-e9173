@@ -37,21 +37,38 @@ def resolve(source):
             raw = response.read()
         return json.loads(raw), "sha256:" + hashlib.sha256(raw).hexdigest()
 
+    def blob(reference):
+        request = urllib.request.Request(
+            f"https://ghcr.io/v2/{repository}/blobs/{reference}",
+            headers={"Authorization": "Bearer " + token},
+        )
+        with urllib.request.urlopen(request, timeout=40) as response:
+            return json.load(response)
+
     data, digest = manifest(tag)
     if "manifests" in data:
         selected = next(item for item in data["manifests"]
                         if item.get("platform", {}).get("os") == "linux"
                         and item["platform"].get("architecture") == "amd64")
-        _, digest = manifest(selected["digest"])
+        data, digest = manifest(selected["digest"])
         if digest != selected["digest"]:
             raise ValueError("Manifest digest mismatch")
-    return {"source": source, "image": f"ghcr.io/{repository}@{digest}"}
+    config = blob(data["config"]["digest"])
+    labels = config.get("config", {}).get("Labels", {}) or {}
+    version = labels.get("org.opencontainers.image.version")
+    if not isinstance(version, str) or not version.strip():
+        version = None
+    return {"source": source, "image": f"ghcr.io/{repository}@{digest}",
+            "version": version}
 
 
 if __name__ == "__main__":
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         resolved = dict(zip(SOURCES, pool.map(resolve, SOURCES.values())))
-    result = {"schema_version": 1, "platform": "linux/amd64",
+    for key in ("container_base", "installer_base"):
+        if not resolved[key]["version"]:
+            raise ValueError(f"{key} is missing org.opencontainers.image.version")
+    result = {"schema_version": 2, "platform": "linux/amd64",
               "resolved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
               **resolved}
     path = Path(__file__).resolve().parents[1] / "image-lock.json"

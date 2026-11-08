@@ -6,6 +6,30 @@ import re
 import shlex
 from pathlib import Path
 
+BUILD_ID_PATTERN = re.compile(
+    r"(?P<upstream_version>[0-9]+\.[0-9]{8})\."
+    r"(?P<custom_revision>[1-9][0-9]*)-"
+    r"(?P<variant>polaris-sdl)"
+)
+
+
+def parse_build_id(value):
+    match = BUILD_ID_PATTERN.fullmatch(value)
+    if not match:
+        raise ValueError("Build ID must match 45.YYYYMMDD.N-polaris-sdl")
+    result = match.groupdict()
+    result["custom_revision"] = int(result["custom_revision"])
+    return result
+
+
+def bazzite_base_version(os_release):
+    pattern = re.compile(r"(?<![0-9])([0-9]+\.[0-9]{8})(?:\.[0-9]+)?(?![0-9])")
+    for key in ("OSTREE_VERSION", "BUILD_ID", "VERSION"):
+        match = pattern.search(os_release.get(key, ""))
+        if match:
+            return match.group(1)
+    raise ValueError("Cannot determine Bazzite base version from os-release")
+
 
 def read_os_release(path):
     values = {}
@@ -31,14 +55,31 @@ def write_metadata(root, role, build_id, revision, created, base_image, payload=
         raise ValueError("A full source commit SHA is required")
     if not build_id or not created:
         raise ValueError("Build ID and creation time are required")
+    version = parse_build_id(build_id)
     os_release = read_os_release(root / "usr/lib/os-release")
+    base_version = bazzite_base_version(os_release)
+    if version["upstream_version"] != base_version:
+        raise ValueError(
+            f"Build version {version['upstream_version']} does not match base OS {base_version}"
+        )
     upstream_file = root / "usr/share/ublue-os/image-info.json"
     upstream = json.loads(upstream_file.read_text()) if upstream_file.exists() else None
-    data = {"schema_version": 1, "role": role, "build_id": build_id,
+    data = {"schema_version": 2, "role": role, "build_id": build_id,
+            "version": version,
+            "display_name": (
+                f"Bazzite {version['upstream_version']}."
+                f"{version['custom_revision']} (Polaris SDL)"
+            ),
+            "target_hardware": {
+                "system": "HP t740 Thin Client",
+                "discrete_gpu": "AMD Radeon E9173",
+                "graphics_family": "AMD Polaris (Lexa PRO)",
+            },
             "source_revision": revision, "created": created,
             "base_image": base_image, "install_payload": payload or None,
             "os": {key: os_release.get(key) for key in
-                   ("NAME", "VERSION_ID", "BUILD_ID", "PRETTY_NAME")},
+                   ("NAME", "VERSION", "VERSION_ID", "BUILD_ID",
+                    "OSTREE_VERSION", "PRETTY_NAME")},
             "upstream_image_info": upstream}
     destination = root / "usr/share/t740/build-info.json"
     destination.parent.mkdir(parents=True, exist_ok=True)

@@ -81,8 +81,8 @@ sudoif command *args:
 #   $target_image - The tag you want to apply to the image (default: $image_name).
 #   $tag - The tag for the image (default: $default_tag).
 #
-# The script constructs the version string using the tag and the current date.
-# If the git working directory is clean, it also includes the short SHA of the current HEAD.
+# The script derives the custom version from the immutable Bazzite base lock and
+# build-version.json. Builds from a dirty source tree are rejected.
 #
 # just build $target_image $tag
 #
@@ -100,25 +100,24 @@ build $target_image=image_name $tag=default_tag:
 
     BUILD_ARGS=()
     LABELS=()
+    if [[ -n "$(git status --porcelain)" ]]; then
+        echo "Refusing to build from a dirty source tree" >&2
+        exit 1
+    fi
     BASE_IMAGE=$(jq -er '.container_base.image | select(test("@sha256:[0-9a-f]{64}$"))' image-lock.json)
     T740_REVISION=$(git rev-parse HEAD)
     T740_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    T740_BUILD_ID="t740-$(date -u +%Y%m%dT%H%M%SZ)-${T740_REVISION:0:12}"
-    if [[ -n "$(git status -s)" ]]; then
-        T740_BUILD_ID="${T740_BUILD_ID}-dirty"
-    fi
+    T740_BUILD_ID=$(python3 scripts/build-version.py)
     BUILD_ARGS+=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
     BUILD_ARGS+=(--build-arg "T740_BUILD_ID=${T740_BUILD_ID}")
     BUILD_ARGS+=(--build-arg "T740_REVISION=${T740_REVISION}")
     BUILD_ARGS+=(--build-arg "T740_CREATED=${T740_CREATED}")
-    if [[ -z "$(git status -s)" ]]; then
-        GIT_SHA=$(git rev-parse --short HEAD)
-        LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
-        LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
-        LABELS+=("--label" "org.opencontainers.image.version=${T740_BUILD_ID}")
-    fi
+    GIT_SHA=$(git rev-parse --short HEAD)
+    LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
+    LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
+    LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
+    LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
+    LABELS+=("--label" "org.opencontainers.image.version=${T740_BUILD_ID}")
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
     # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.
@@ -224,6 +223,7 @@ generate-build-tags $target_image=image_name $tag=default_tag:
     set -eoux pipefail
 
     DATE=$(date +%Y%m%d)
+    T740_BUILD_ID=$(python3 scripts/build-version.py)
     BUILD_TAGS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
@@ -235,6 +235,7 @@ generate-build-tags $target_image=image_name $tag=default_tag:
     BUILD_TAGS+=("${DATE}")
     BUILD_TAGS+=("${tag}")
     BUILD_TAGS+=("${tag}-${DATE}")
+    BUILD_TAGS+=("${T740_BUILD_ID}")
 
     echo "${BUILD_TAGS[@]}"
 

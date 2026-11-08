@@ -53,7 +53,15 @@ jobs:
           INSTALLER_BASE=$(jq -er '.installer_base.image' image-lock.json)
           INSTALL_PAYLOAD=$(jq -er '.install_payload.image' image-lock.json)
           CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          BUILD_ID="t740-iso-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          BUILD_ID=$(jq -er '.install_payload.version | select(test("^[0-9]+\\.[0-9]{8}\\.[1-9][0-9]*-polaris-sdl$"))' image-lock.json)
+          EXPECTED_BUILD_ID=$(python3 scripts/build-version.py)
+          if [[ "$BUILD_ID" != "$EXPECTED_BUILD_ID" ]]; then
+            echo "Payload version $BUILD_ID does not match expected build $EXPECTED_BUILD_ID" >&2
+            exit 1
+          fi
+          T740_ISO_NAME="bazzite-t740-e9173-${BUILD_ID}-amd64.iso"
+          echo "T740_BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
+          echo "T740_ISO_NAME=$T740_ISO_NAME" >> "$GITHUB_ENV"
           sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
             --cap-add sys_admin \
             --security-opt label=disable \
@@ -70,6 +78,7 @@ jobs:
           sudo podman cp "$container:/usr/share/t740/." build-provenance/
           sudo podman rm "$container"
           cp image-lock.json build-provenance/
+          cp build-version.json build-provenance/
 
       - name: Show disk-space usage
         if: always()
@@ -82,7 +91,7 @@ jobs:
         uses: Zeglius/titanoboa@7737f4748458252ac827dca14b3d6dd09298472a
         with:
           image-ref: localhost/t740-installer:latest
-          iso-dest: bazzite-t740-e9173-polaris-amd64.iso
+          iso-dest: ${{ env.T740_ISO_NAME }}
 
       - name: Prepare ISO artifact
         id: artifact

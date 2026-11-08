@@ -8,5 +8,5 @@ fi
 case "${1:-}" in
     --json) cat "$file" ;;
     --id) jq -r '.build_id // "unavailable"' "$file" ;;
-    *) jq -r '"Role: \(.role)", "OS: \(.os.PRETTY_NAME // .os.NAME // "unknown")", "Build: \(.build_id)", "Created: \(.created)", "Commit: \(.source_revision)", "Base: \(.base_image)", (if .install_payload then "Install payload: \(.install_payload)" else empty end)' "$file" ;;
+    *) jq -r '"Role: \(.role)", "OS: \(.os.PRETTY_NAME // .os.NAME // "unknown")", "Image: \(.display_name // .build_id)", "Build: \(.build_id)", "Created: \(.created)", "Commit: \(.source_revision)", "Base: \(.base_image)", (if .install_payload then "Install payload: \(.install_payload)" else empty end)' "$file" ;;
 esac
