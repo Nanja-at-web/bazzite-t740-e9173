@@ -14,7 +14,7 @@
   },
   "install_payload": {
     "source": "ghcr.io/nanja-at-web/bazzite-t740-e9173:latest",
-    "image": "ghcr.io/nanja-at-web/bazzite-t740-e9173@sha256:2b844d7734a68477db72856d5ce542a2d71d989a4c60900fea3fb47b2683fd51",
-    "version": null
+    "image": "ghcr.io/nanja-at-web/bazzite-t740-e9173@sha256:ace6e504c3d639950988245d0919edcabe4022156da2f9dc58e1f29ee87da66a",
+    "version": "45.20261105.1-polaris-sdl"
   }
 }
