@@ -30,3 +30,29 @@ VM/hardware installation. Those require a later authorized image build/test.
 Justfile-specific integration check and ShellCheck remain part of the later
 container workflow validation.
 The validated hardware baseline remains ISO build #4, as documented in README.
+
+## Container integration validation: workflow run #15
+
+The container workflow was manually dispatched for development commit
+`430665e08c95fb69514569d2400bcd0505d5947a` without merging to `main`:
+
+- Run: <https://github.com/Nanja-at-web/bazzite-t740-e9173/actions/runs/42486319431>
+- Result: success.
+- `just` installation and Justfile syntax validation: success.
+- Container build and `bootc container lint`: success.
+- rpm-ostree rechunking: success.
+- OCI provenance labels were restored after rechunking, including version
+  `45.20261105.1-polaris-sdl`, full source revision, creation time and the
+  digest-pinned Bazzite base.
+- The expected version tag `45.20261105.1-polaris-sdl` was generated and applied
+  to the local test image.
+- Registry login, GHCR push, Cosign installation and signing were skipped by the
+  workflow's default-branch guards.
+- The published `latest` AMD64 digest remained
+  `sha256:2b844d7734a68477db72856d5ce542a2d71d989a4c60900fea3fb47b2683fd51`
+  and still has no version label.
+
+Because the test image was intentionally not published, its runner-local image
+ID is not a durable registry digest and cannot yet be selected as an ISO
+payload. Publishing the validated container on the default branch and recording
+its resulting GHCR digest is the next release step. No ISO was built.
