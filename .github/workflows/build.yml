@@ -45,6 +45,8 @@ jobs:
           just check
 
       - name: Run provenance tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python3 -m unittest discover -s tests -v
 

@@ -215,6 +215,7 @@ class WiringTests(unittest.TestCase):
     def test_container_workflow_runs_provenance_tests(self):
         source = (ROOT / ".github/workflows/build.yml").read_text()
         self.assertIn("python3 -m unittest discover -s tests -v", source)
+        self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', source)
 
 
 class ReleaseScriptTests(unittest.TestCase):
