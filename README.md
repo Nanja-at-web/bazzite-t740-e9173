@@ -46,6 +46,21 @@ permanent archive of the ISO.
 
 ## What this image fixes
 
+Development work on versioning, immutable image inputs and diagnostics is
+documented in [build provenance](docs/build-provenance.md). It does not change
+the hardware-validation status of build #4 or authorize a new ISO build.
+
+The prepared custom version syntax follows Bazzite:
+
+```text
+45.20261105.1-polaris-sdl
+```
+
+This means Bazzite base `45.20261105`, custom revision `1`, and the current
+Gamescope binary with the Polaris SDL backend. The readable form is
+`Bazzite 45.20261105.1 (Polaris SDL)`. `t740-e9173` remains in the image and ISO
+names so the hardware target is visible without duplicating it in the version.
+
 The Radeon E9170 family is Polaris-based. The modern DRM backend can fail on
 this generation, while Gamescope's SDL compatibility backend is intended for
 older GPUs. Current Bazzite no longer ships a separate `gamescope-legacy`
@@ -86,6 +101,7 @@ The workflow publishes:
 
 ```text
 ghcr.io/<repository-owner>/bazzite-t740-e9173:latest
+ghcr.io/<repository-owner>/bazzite-t740-e9173:45.20261105.1-polaris-sdl
 ```
 
 ## Install on the existing Bazzite system

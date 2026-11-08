@@ -64,10 +64,7 @@ mkdir -p /var/lib/rpm-state # Needed for Anaconda Web UI
 dnf install -qy --setopt=install_weak_deps=0 qrencode yad
 
 # Variables
-imageref="$(podman images --format '{{ index .Names 0 }}\n' 'bazzite*' | head -1)"
-imageref="${imageref##*://}"
-imageref="${imageref%%:*}"
-imagetag="$(podman images --format '{{ .Tag }}\n' "$imageref" | head -1)"
+imageref="${INSTALL_IMAGE_PAYLOAD:?Expected the digest-pinned installation payload}"
 sbkey='https://github.com/ublue-os/akmods/raw/main/certs/public_key.der'
 SECUREBOOT_KEY="/usr/share/ublue-os/sb_pubkey.der"
 SECUREBOOT_DOC_URL="https://docs.bazzite.gg/sb"
@@ -154,7 +151,7 @@ run0 --user=liveuser yad \
     < /tmp/anaconda.log
 %end
 
-ostreecontainer --url=$imageref:$imagetag --transport=containers-storage --no-signature-verification
+ostreecontainer --url=$imageref --transport=containers-storage --no-signature-verification
 %include /usr/share/anaconda/post-scripts/install-configure-upgrade.ks
 %include /usr/share/anaconda/post-scripts/disable-fedora-flatpak.ks
 %include /usr/share/anaconda/post-scripts/install-flatpaks.ks
@@ -167,7 +164,7 @@ EOF
 # Signed Images
 cat <<EOF >>/usr/share/anaconda/post-scripts/install-configure-upgrade.ks
 %post --erroronfail --log=/tmp/anacoda_custom_logs/bootc-switch.log
-bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry $imageref:$imagetag
+bootc switch --mutate-in-place --enforce-container-sigpolicy --transport registry $imageref
 %end
 EOF
 

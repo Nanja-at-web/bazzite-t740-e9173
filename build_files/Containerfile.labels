@@ -1,0 +1,3 @@
+# Reapply provenance labels after rootfs-based rpm-ostree rechunking.
+ARG SOURCE_IMAGE
+FROM ${SOURCE_IMAGE}

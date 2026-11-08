@@ -10,6 +10,12 @@ BASE_IMAGE=${BASE_IMAGE:?}
 INSTALL_IMAGE_PAYLOAD=${INSTALL_IMAGE_PAYLOAD:?}
 FLATPAK_DIR_SHORTNAME=${FLATPAK_DIR_SHORTNAME:?}
 
+# Capture the live environment separately from the embedded installation image.
+python3 /src/build-metadata.py --role installer \
+    --build-id "${T740_BUILD_ID:?}" --revision "${T740_REVISION:?}" \
+    --created "${T740_CREATED:?}" --base-image "$BASE_IMAGE" \
+    --payload "$INSTALL_IMAGE_PAYLOAD"
+
 # Create the directory that /root is symlinked to
 mkdir -p "$(realpath /root)"
 
@@ -28,6 +34,19 @@ if mountpoint -q /usr/lib/containers/storage; then
 else
     podman pull "$INSTALL_IMAGE_PAYLOAD"
 fi
+
+# Export provenance of the exact payload without starting it. Older payloads
+# lack build-info.json; retain their inspected ID and real os-release instead.
+mkdir -p /usr/share/t740
+podman image inspect "$INSTALL_IMAGE_PAYLOAD" > /usr/share/t740/payload-inspect.json
+payload_container=$(podman create "$INSTALL_IMAGE_PAYLOAD" /usr/bin/true)
+trap 'podman rm "$payload_container"' EXIT
+podman cp "$payload_container:/usr/lib/os-release" /usr/share/t740/payload-os-release
+if ! podman cp "$payload_container:/usr/share/t740/build-info.json" /usr/share/t740/payload-build-info.json; then
+    echo 'Payload has no custom build metadata (legacy image)' >&2
+fi
+podman rm "$payload_container"
+trap - EXIT
 
 # Determine desktop environment
 if [[ ${BASE_IMAGE} == *-gnome* ]]; then

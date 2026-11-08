@@ -14,3 +14,8 @@ test -x /usr/bin/gamescope
 # and make the diagnostics helper directly executable.
 chmod 0644 /etc/gamescope-session-plus/sessions.d/steam
 chmod 0755 /usr/bin/t740-gpu-diagnostics
+chmod 0755 /usr/bin/t740-build-info
+
+python3 /ctx/write-build-metadata.py --role system \
+    --build-id "${T740_BUILD_ID:?}" --revision "${T740_REVISION:?}" \
+    --created "${T740_CREATED:?}" --base-image "${BASE_IMAGE:?}"
