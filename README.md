@@ -6,6 +6,44 @@ Custom Bazzite Steam Gaming Mode image for an HP t740 with:
 - AMD Embedded Radeon E9173 at PCI address `0000:01:00.0`
 - the monitor connected directly to the E9173 DisplayPort output
 
+## Hardware-validated baseline: installer build #4
+
+On 2026-11-08, the owner confirmed the following on the HP t740 with Radeon
+E9173: installation from ISO build #4 completed, the DisplayPort cable remained
+connected directly to the E9173, and the installed system continued to display
+Steam Gaming Mode after a reboot. This is a user-reported hardware test, not an
+automated GPU validation.
+
+| Item | Validated baseline |
+| --- | --- |
+| ISO workflow | [Build #4](https://github.com/Nanja-at-web/bazzite-t740-e9173/actions/runs/42388141770) |
+| Source commit | `0c0787abb0eb697a368c36acc561dcd6eba972b9` |
+| ISO file | `bazzite-t740-e9173-polaris-amd64.iso` |
+| GPU/output | Radeon E9173, monitor connected directly via DisplayPort |
+| Installation | Completed, as reported by the owner |
+| Installed Gaming Mode | Picture available, including after reboot |
+
+SHA-256 of the validated ISO (matched against the build log):
+
+```text
+2a4da2b2fcc82fbd398a94efdd45181d84bfdbebabf7326db7416d39df5e9ef4
+```
+
+This baseline includes the Gamescope SDL/dGPU selection configuration and the
+Anaconda canonical-root fix for the `systemd-tmpfiles` SELinux relabeling failure
+(exit code 73). It still has the cosmetic `BUILD: null` display issue.
+
+Build #5 additionally changes that display to fall back to image creation time
+and image ID. It has not been confirmed on this hardware. Do not describe later
+builds as hardware-validated based on the build #4 result alone.
+
+The source commit and ISO checksum identify the baseline, but the workflows used
+mutable `stable`/`latest` image references. The exact embedded container digest
+has not been established here; rebuilding this commit is not guaranteed to
+reproduce the validated ISO. Keep a copy of the tested ISO: GitHub Actions
+artifacts have limited retention. Recording this baseline does not create a
+permanent archive of the ISO.
+
 ## What this image fixes
 
 The Radeon E9170 family is Polaris-based. The modern DRM backend can fail on
