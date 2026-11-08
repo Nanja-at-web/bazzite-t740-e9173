@@ -1,8 +1,10 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -145,10 +147,11 @@ class WiringTests(unittest.TestCase):
         self.assertNotIn("$imageref:$imagetag", source)
         self.assertIn("ostreecontainer --url=$imageref --transport=containers-storage", source)
 
-    def test_iso_trigger_excludes_development_branch(self):
+    def test_iso_trigger_is_manual_only(self):
         source = (ROOT / ".github/workflows/build-disk.yml").read_text()
-        self.assertIn("branches: [main]", source)
-        self.assertNotIn("pull_request:", source)
+        self.assertIn("\n  workflow_dispatch:\n", source)
+        for automatic_trigger in ("push", "pull_request", "schedule"):
+            self.assertNotIn(f"\n  {automatic_trigger}:", source)
 
     def test_iso_uses_payload_version_and_versioned_filename(self):
         source = (ROOT / ".github/workflows/build-disk.yml").read_text()
@@ -180,6 +183,110 @@ class WiringTests(unittest.TestCase):
         self.assertIn("export GAMESCOPE_BIN=/usr/bin/gamescope", session)
         self.assertIn("export BACKEND=sdl", session)
         self.assertNotIn("GAMESCOPE_BIN=/usr/bin/gamescope-legacy", session)
+
+    def test_repository_release_uses_next_custom_revision(self):
+        result = subprocess.run(
+            ["python3", str(ROOT / "scripts/build-version.py")],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        )
+        self.assertEqual(result.stdout.strip(), "45.20261105.2-polaris-sdl")
+
+    def test_build_wires_deterministic_commit_time(self):
+        source = (ROOT / "Justfile").read_text()
+        containerfile = (ROOT / "Containerfile").read_text()
+        self.assertIn("python3 scripts/build-created.py --format rfc3339", source)
+        self.assertIn("python3 scripts/build-created.py --format epoch", source)
+        self.assertIn('SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"', source)
+        self.assertNotIn("T740_CREATED=$(date -u", source)
+        self.assertNotIn('org.opencontainers.image.created=$(date -u', source)
+        self.assertIn("DATE=$(python3 scripts/build-created.py --format rfc3339", source)
+        self.assertNotIn("DATE=$(date", source)
+        self.assertIn("ARG SOURCE_DATE_EPOCH", containerfile)
+        self.assertIn('SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"', containerfile)
+
+    def test_publish_guard_runs_before_build_and_registry_push(self):
+        source = (ROOT / ".github/workflows/build.yml").read_text()
+        guard = source.index("python3 scripts/check-version-tag.py")
+        build = source.index("- name: Build Image")
+        push_loop = source.index("for tag in ${ALIAS_TAGS}")
+        self.assertLess(guard, build)
+        self.assertLess(guard, push_loop)
+
+    def test_container_workflow_runs_provenance_tests(self):
+        source = (ROOT / ".github/workflows/build.yml").read_text()
+        self.assertIn("python3 -m unittest discover -s tests -v", source)
+
+
+class ReleaseScriptTests(unittest.TestCase):
+    def test_commit_timestamp_is_stable_in_both_formats(self):
+        script = ROOT / "scripts/build-created.py"
+        self.assertTrue(script.exists(), "missing deterministic build timestamp generator")
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "test@example.invalid"], check=True)
+            (repository / "file").write_text("content")
+            subprocess.run(["git", "-C", str(repository), "add", "file"], check=True)
+            environment = os.environ | {
+                "GIT_AUTHOR_DATE": "2026-11-08T12:34:56Z",
+                "GIT_COMMITTER_DATE": "2026-11-08T12:34:56Z",
+            }
+            subprocess.run(
+                ["git", "-C", str(repository), "commit", "-q", "-m", "fixture"],
+                check=True, env=environment,
+            )
+            rfc3339 = subprocess.run(
+                ["python3", str(script), "--repo", str(repository), "--format", "rfc3339"],
+                check=True, capture_output=True, text=True,
+            )
+            epoch = subprocess.run(
+                ["python3", str(script), "--repo", str(repository), "--format", "epoch"],
+                check=True, capture_output=True, text=True,
+            )
+        self.assertEqual(rfc3339.stdout.strip(), "2026-11-08T12:34:56Z")
+        self.assertEqual(epoch.stdout.strip(), "1794141296")
+
+    def run_tag_check(self, tags, tag="45.20261105.2-polaris-sdl", exit_code=0,
+                      provide_skopeo=True):
+        script = ROOT / "scripts/check-version-tag.py"
+        self.assertTrue(script.exists(), "missing immutable version-tag guard")
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            if provide_skopeo:
+                fake = directory / "skopeo"
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    f"printf '%s\\n' '{json.dumps({'Repository': 'example/image', 'Tags': tags})}'\n"
+                    f"exit {exit_code}\n"
+                )
+                fake.chmod(0o755)
+            result = subprocess.run(
+                [sys.executable, str(script), "ghcr.io/example/image", tag],
+                capture_output=True, text=True,
+                env=os.environ | {"PATH": str(directory)},
+            )
+        return result
+
+    def test_version_tag_guard_accepts_unused_tag(self):
+        result = self.run_tag_check(["latest", "45.20261105.1-polaris-sdl"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("available", result.stdout)
+
+    def test_version_tag_guard_rejects_existing_tag(self):
+        result = self.run_tag_check(["latest", "45.20261105.2-polaris-sdl"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("already exists", result.stderr)
+
+    def test_version_tag_guard_fails_closed_on_registry_error(self):
+        result = self.run_tag_check([], exit_code=42)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Unable to list registry tags", result.stderr)
+
+    def test_version_tag_guard_fails_closed_when_skopeo_is_missing(self):
+        result = self.run_tag_check([], provide_skopeo=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("skopeo is required", result.stderr)
 
 
 if __name__ == "__main__":
