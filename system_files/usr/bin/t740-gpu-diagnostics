@@ -4,6 +4,30 @@ set -u
 
 dgpu_path=/sys/bus/pci/devices/0000:01:00.0
 
+echo "== Custom build provenance =="
+if command -v t740-build-info >/dev/null; then
+    t740-build-info
+else
+    echo 'No custom build metadata (older image)'
+fi
+for info in /usr/share/t740/payload-build-info.json /usr/share/t740/payload-os-release; do
+    if [[ -r "$info" ]]; then
+        echo "== Embedded installation payload: $info =="
+        cat "$info"
+    fi
+done
+
+echo
+echo "== Running OS, kernel and graphics package versions =="
+cat /etc/os-release
+uname -r
+if command -v rpm >/dev/null; then
+    rpm -qa --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\n' \
+        | grep -E '^(kernel(-core|-modules|-modules-core)?-|mesa-|libdrm-|linux-firmware-|amd-gpu-firmware-|gamescope)' \
+        | sort || true
+fi
+echo 'Firmware entries above are installed package versions, not GPU VBIOS updates.'
+
 echo "== Bazzite deployment =="
 bootc status 2>&1 || true
 
@@ -37,7 +61,28 @@ done
 
 echo
 echo "== DRM connector state =="
-grep -H . /sys/class/drm/card*-*/status 2>/dev/null || true
+for node in /sys/class/drm/card[0-9]* /sys/class/drm/renderD*; do
+    [[ -e "$node" ]] || continue
+    if [[ -e "$node/device" ]]; then
+        printf '%s -> %s\n' "$(basename "$node")" "$(readlink -f "$node/device")"
+    fi
+    for field in status enabled modes; do
+        if [[ -r "$node/$field" ]]; then
+            echo "$node/$field:"
+            cat "$node/$field"
+        fi
+    done
+done
+
+echo
+echo "== Configured Gamescope session overrides =="
+for config in /etc/gamescope-session-plus/sessions.d/steam \
+    /usr/share/gamescope-session-plus/sessions.d/steam; do
+    if [[ -r "$config" ]]; then
+        echo "$config:"
+        grep -nE 'BACKEND|VULKAN_ADAPTER|t740_dgpu_path|GAMESCOPE' "$config" || true
+    fi
+done
 
 echo
 echo "== Current Gamescope process =="
@@ -45,6 +90,20 @@ pgrep -a gamescope || true
 gamescope_pid="$(pgrep -o gamescope 2>/dev/null || true)"
 if [[ -n "${gamescope_pid}" ]]; then
 	readlink -f "/proc/${gamescope_pid}/exe" || true
+    echo 'Selected process environment (graphics variables only):'
+    if [[ -r "/proc/$gamescope_pid/environ" ]]; then
+        tr '\0' '\n' < "/proc/$gamescope_pid/environ" \
+            | grep -E '^(BACKEND|VULKAN_ADAPTER|DRI_PRIME|VK_DRIVER_FILES|VK_ICD_FILENAMES|SDL_VIDEODRIVER)=' || true
+    else
+        echo 'Environment unavailable: process belongs to another user or exited.'
+    fi
+    echo 'Open GPU device files (opened nodes alone do not prove rendering load):'
+    for fd in /proc/"$gamescope_pid"/fd/*; do
+        target=$(readlink "$fd" 2>/dev/null || true)
+        case "$target" in
+            /dev/dri/*) printf '%s -> %s\n' "$fd" "$target" ;;
+        esac
+    done
 fi
 
 echo

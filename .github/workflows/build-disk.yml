@@ -50,13 +50,26 @@ jobs:
 
       - name: Build Bazzite installer payload
         run: |
+          INSTALLER_BASE=$(jq -er '.installer_base.image' image-lock.json)
+          INSTALL_PAYLOAD=$(jq -er '.install_payload.image' image-lock.json)
+          CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BUILD_ID="t740-iso-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
           sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
             --cap-add sys_admin \
             --security-opt label=disable \
-            --build-arg BASE_IMAGE=ghcr.io/ublue-os/bazzite:stable \
-            --build-arg INSTALL_IMAGE_PAYLOAD=ghcr.io/nanja-at-web/bazzite-t740-e9173:latest \
+            --build-arg "BASE_IMAGE=$INSTALLER_BASE" \
+            --build-arg "INSTALL_IMAGE_PAYLOAD=$INSTALL_PAYLOAD" \
+            --build-arg "T740_BUILD_ID=$BUILD_ID" \
+            --build-arg "T740_REVISION=$GITHUB_SHA" \
+            --build-arg "T740_CREATED=$CREATED" \
             --build-arg FLATPAK_DIR_SHORTNAME=kde_flatpaks \
             -t localhost/t740-installer:latest installer/
+
+          container=$(sudo podman create localhost/t740-installer:latest /usr/bin/true)
+          mkdir -p build-provenance
+          sudo podman cp "$container:/usr/share/t740/." build-provenance/
+          sudo podman rm "$container"
+          cp image-lock.json build-provenance/
 
       - name: Show disk-space usage
         if: always()
@@ -79,6 +92,7 @@ jobs:
           ISO_PATH="${{ steps.build.outputs.iso-dest }}"
           ISO_NAME=$(basename "$ISO_PATH")
           mkdir -p "$ISO_UPLOAD_DIR"
+          cp -a build-provenance "$ISO_UPLOAD_DIR/"
           mv "$ISO_PATH" "$ISO_UPLOAD_DIR/"
           (cd "$ISO_UPLOAD_DIR" && sha256sum "$ISO_NAME" | tee "$ISO_NAME-CHECKSUM")
           echo "directory=$ISO_UPLOAD_DIR" >> "$GITHUB_OUTPUT"

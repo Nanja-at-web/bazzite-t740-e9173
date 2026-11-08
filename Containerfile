@@ -1,11 +1,22 @@
+# Require an explicit immutable base from image-lock.json (see `just build`).
+ARG BASE_IMAGE
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
 COPY system_files /system_files
+COPY installer/build-metadata.py /write-build-metadata.py
 
 # Base Image
 # Steam Gaming Mode edition for AMD/Intel systems.
-FROM ghcr.io/ublue-os/bazzite-deck:stable
+FROM ${BASE_IMAGE}
+ARG BASE_IMAGE
+ARG T740_BUILD_ID
+ARG T740_REVISION
+ARG T740_CREATED
+LABEL org.opencontainers.image.version=${T740_BUILD_ID} \
+      org.opencontainers.image.revision=${T740_REVISION} \
+      org.opencontainers.image.created=${T740_CREATED} \
+      org.opencontainers.image.base.name=${BASE_IMAGE}
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:testing
 # FROM ghcr.io/ublue-os/aurora:stable
@@ -35,7 +46,8 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \
-    /ctx/build.sh
+    env BASE_IMAGE="$BASE_IMAGE" T740_BUILD_ID="$T740_BUILD_ID" \
+    T740_REVISION="$T740_REVISION" T740_CREATED="$T740_CREATED" /ctx/build.sh
 
 ### LINTING
 ## Verify final image and contents are correct.

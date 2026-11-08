@@ -46,6 +46,10 @@ permanent archive of the ISO.
 
 ## What this image fixes
 
+Development work on versioning, immutable image inputs and diagnostics is
+documented in [build provenance](docs/build-provenance.md). It does not change
+the hardware-validation status of build #4 or authorize a new ISO build.
+
 The Radeon E9170 family is Polaris-based. The modern DRM backend can fail on
 this generation, while Gamescope's SDL compatibility backend is intended for
 older GPUs. Current Bazzite no longer ships a separate `gamescope-legacy`
