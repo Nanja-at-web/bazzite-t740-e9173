@@ -38,8 +38,8 @@ Refresh explicitly with `python3 scripts/lock-images.py`, review the diff and
 commit it. This only queries registry metadata; it does not build anything.
 The initial lock is a development snapshot, **not** a recovered build #4 lock.
 Each resolved entry also records its OCI version label. The currently locked
-payload remains the published revision `45.20261105.1-polaris-sdl` until the
-new revision is built, verified and pinned by digest.
+payload is the signed revision `45.20261105.2-polaris-sdl` at digest
+`sha256:93dc4bb0199798624851db25908a922fe42826efee5f61f990bfe6443ff1d4fa`.
 
 Building a new system container does not automatically change the pinned ISO
 payload. After validating the published container, update `install_payload` to
@@ -50,10 +50,9 @@ automatic system updates do not advance beyond that pinned origin. Moving to a
 new validated digest requires an explicit bootc switch/update of the origin.
 
 The ISO workflow refuses to build unless the locked payload has a valid custom
-version matching the version derived from the locked Bazzite base. Therefore
-the present revision-1 payload lock intentionally cannot produce a revision-2
-ISO. After a validated container is published and the lock is refreshed, the
-ISO name will be
+version matching the version derived from the locked Bazzite base. The current
+revision-2 payload satisfies that check, but an ISO is still created only by an
+explicit manual workflow dispatch. Its filename will be
 `bazzite-t740-e9173-45.20261105.2-polaris-sdl-amd64.iso`.
 
 ## Reproducible container release controls

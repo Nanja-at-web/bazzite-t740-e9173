@@ -136,6 +136,11 @@ class WiringTests(unittest.TestCase):
         for key in ("container_base", "installer_base", "install_payload"):
             metadata.pinned(data[key]["image"])
         self.assertEqual(data["container_base"]["version"], "45.20261105")
+        release = subprocess.run(
+            ["python3", str(ROOT / "scripts/build-version.py")],
+            cwd=ROOT, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(data["install_payload"]["version"], release)
 
     def test_lock_refresh_captures_oci_version(self):
         source = (ROOT / "scripts/lock-images.py").read_text()

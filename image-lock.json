@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "platform": "linux/amd64",
-  "resolved_at": "2026-11-08T09:14:37.727789+00:00",
+  "resolved_at": "2026-11-08T20:39:52+00:00",
   "container_base": {
     "source": "ghcr.io/ublue-os/bazzite-deck:stable",
     "image": "ghcr.io/ublue-os/bazzite-deck@sha256:e9b5c3bd38d10f51e3436aa4e00c5a58f8b54c89f22dde14f95ca0622cfb2d6c",
@@ -14,7 +14,7 @@
   },
   "install_payload": {
     "source": "ghcr.io/nanja-at-web/bazzite-t740-e9173:latest",
-    "image": "ghcr.io/nanja-at-web/bazzite-t740-e9173@sha256:ace6e504c3d639950988245d0919edcabe4022156da2f9dc58e1f29ee87da66a",
-    "version": "45.20261105.1-polaris-sdl"
+    "image": "ghcr.io/nanja-at-web/bazzite-t740-e9173@sha256:93dc4bb0199798624851db25908a922fe42826efee5f61f990bfe6443ff1d4fa",
+    "version": "45.20261105.2-polaris-sdl"
   }
 }
