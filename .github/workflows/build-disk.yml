@@ -39,6 +39,8 @@ jobs:
           sudo mkdir -p /mnt/podman-storage/storage /mnt/podman-storage/tmp
           sudo mount --bind /mnt/podman-storage/storage /var/lib/containers/storage
           sudo systemctl start podman.service
+          sudo modprobe fuse
+          test -c /dev/fuse
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,6 +61,7 @@ jobs:
           echo "T740_ISO_NAME=$T740_ISO_NAME" >> "$GITHUB_ENV"
           sudo env TMPDIR=/mnt/podman-storage/tmp podman build \
             --cap-add sys_admin \
+            --device /dev/fuse:/dev/fuse \
             --security-opt label=disable \
             --build-arg "BASE_IMAGE=$INSTALLER_BASE" \
             --build-arg "INSTALL_IMAGE_PAYLOAD=$INSTALL_PAYLOAD" \
