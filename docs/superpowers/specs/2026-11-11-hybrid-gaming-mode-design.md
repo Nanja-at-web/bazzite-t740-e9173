@@ -36,10 +36,20 @@ the HP t740 with Radeon E9173 and the Dell OptiPlex 5080 Micro with Intel UHD
 
 ## Agreed product decisions
 
-- Controller input remains assigned to Steam/the running game when mouse and
-  keyboard focus moves to an application on another display. The implementation
-  may use existing Bazzite input facilities, but it must not require per-device
-  seats in the first release.
+- Controller input remains assigned to Steam/the running game when the real
+  desktop pointer or keyboard focus moves to another display. Crossing or merely
+  touching a monitor edge never transfers controller ownership.
+- The user can explicitly transfer controller ownership between the game and
+  the secondary Plasma workspace from a Decky Quick Access Menu action, a
+  controller-operable desktop return control, or a configurable controller
+  chord. Only one target receives controller input at a time.
+- Automatic controller transfer based on pointer movement is disabled by
+  default. A future opt-in mode may require a deliberate dwell and confirmation;
+  a game-rendered HUD crosshair or captured relative pointer must never count as
+  the desktop pointer.
+- Interaction prompts use the detected Xbox, PlayStation, or Nintendo button
+  layout where reliable controller identity is available, with neutral
+  Confirm/Back labels as the safe fallback.
 - Hybrid Mode is opt-in and is not made the default session. In addition to its
   SDDM entry, the image provides a **Switch to Hybrid Gaming Mode** action so
   systems configured for Bazzite autologin can reach it without editing SDDM
@@ -75,6 +85,8 @@ the HP t740 with Radeon E9173 and the Dell OptiPlex 5080 Micro with Intel UHD
 - Do not make a second compositor compete with Gamescope for DRM master on the
   same GPU.
 - Do not patch upstream Gamescope with an unmaintainable desktop shell.
+- Do not patch Steam's closed Gamepad UI directly; use a Decky/QAM integration
+  with an independent shortcut and desktop fallback.
 - Do not overwrite the user's existing Plasma display layout.
 - Do not start a new ISO automatically while this feature is being developed.
 
@@ -156,8 +168,13 @@ Proposed image-owned components:
 - `/usr/libexec/bazzite-hybrid-session`
 - `/usr/libexec/bazzite-hybrid-controller`
 - `/usr/libexec/bazzite-hybrid-display-select`
+- `/usr/libexec/bazzite-hybrid-focus`
 - `/usr/lib/systemd/user/bazzite-hybrid-gaming.service`
+- `/usr/lib/systemd/user/bazzite-hybrid-focus.service`
 - `/usr/share/applications/bazzite-hybrid-display-select.desktop`
+- an image-owned Decky plugin bundle for the Gaming Mode focus action
+- an image-owned Plasma overlay/widget for the desktop return action
+- an InputPlumber desktop-control profile, loaded only while Desktop control is active
 
 Names are intentionally hardware-neutral. Existing `t740-*` diagnostics and
 metadata remain compatible and can be renamed separately in a later change.
@@ -222,14 +239,35 @@ clears Plasma's portal or display environment.
 
 ### Input and focus
 
-- Steam retains controller input while Plasma continues to accept mouse and
-  keyboard input on the secondary workspaces, including while another window
-  owns keyboard focus.
+The Hybrid focus controller owns a two-state machine: `game` and `desktop`.
+It exposes one unprivileged, local control interface consumed by the QAM action,
+desktop return control, configurable chord, and diagnostics.
+
+- In `game` state, the ordinary gamepad profile is restored and Steam/the
+  running game receives controller input. Plasma still accepts ordinary mouse
+  and keyboard input on secondary workspaces.
+- In `desktop` state, InputPlumber loads a desktop-control profile that maps
+  controller input to pointer, scrolling, navigation, activation, and Back/Escape.
+  Gamepad events must not leak to the game while this state is active.
+- Every state transition is atomic from the user's perspective, displays a
+  short target notification, and restores the exact previously active gamepad
+  profile when returning to `game`.
+- If InputPlumber, the chosen device, or the desktop profile is unavailable,
+  the transition fails closed: the game mapping remains active and the user is
+  notified. The controller must never be left silently unusable.
+- The Decky integration adds a QAM action; it does not modify Steam files.
+  Decky absence or plugin failure must not remove the chord and desktop fallback.
+- The desktop return control is focusable and controller-operable and remains
+  reachable on a non-gaming output while `desktop` state is active.
+- Controller glyph selection follows reliable runtime identity (Steam/SDL or
+  vendor/product mapping). Unknown devices use neutral text instead of guessing.
+- The real Plasma pointer may cross outputs without changing controller state.
+  HUD crosshairs and relative/captured game pointers are not desktop pointers
+  and cannot trigger a state transition.
 - The Gamescope window must not minimize when focus moves to another display.
 - Moving keyboard focus away from a game is allowed. Game-specific pause or
   input behavior is documented rather than hidden.
 - The first release does not implement per-device input seats.
-- A keyboard shortcut and a desktop launcher refocus the Gamescope/Steam window.
 
 ### Secondary workspace behavior
 
@@ -292,6 +330,10 @@ personal application command lines.
 - Configuration and runtime files are user-owned and written atomically.
 - Commands are constructed as arrays, not evaluated shell strings containing
   monitor metadata.
+- Controller switching uses an allowlisted local protocol and never accepts
+  arbitrary commands from the QAM plugin or desktop control.
+- The original InputPlumber profile is recorded before a desktop transition and
+  restored on return, service stop, logout, and recoverable failure.
 - EDID manufacturer/model data stays local and is included in diagnostics only
   when the user explicitly runs the command.
 - Flatpak applications continue using normal Plasma portals.
@@ -303,6 +345,11 @@ personal application command lines.
 - Shell/static checks for every launcher and service helper.
 - Unit tests for configuration parsing, EDID/connector resolution, fallback
   selection, command construction, and the conditional Polaris backend.
+- Unit tests for the focus state machine, exclusive routing, original-profile
+  restoration, idempotent transitions, unsupported controllers, and failure
+  rollback.
+- Contract tests proving the QAM and Plasma controls can request only
+  `game`, `desktop`, `toggle`, and `status`.
 - Tests proving that Intel hardware never receives the Polaris SDL override.
 - Tests proving existing direct Gaming Mode files remain unchanged.
 - Failure tests for missing Gamescope, missing Steam, corrupt config, and a
@@ -321,10 +368,18 @@ Run the same checklist on the HP t740/Radeon E9173 and Dell OptiPlex 5080/UHD
 6. Browser, Discord or TeamSpeak, and a monitoring tool remain independently
    usable on the other display while the game runs.
 7. Mouse/keyboard focus can move to the secondary display without minimizing
-   Gamescope; controller input can return to Steam.
-8. Game exit leaves secondary applications running.
-9. Missing/disconnected selected display produces the documented safe fallback.
-10. Logs and diagnostics identify the selected backend and output.
+   Gamescope and without changing controller ownership.
+8. The QAM action or configured chord transfers the controller exclusively to
+   the secondary Plasma workspace; the desktop return control transfers it back
+   without input leaking to the game.
+9. Xbox, PlayStation, and Nintendo controllers show their detected glyph family;
+   an unknown controller shows neutral labels.
+10. A HUD crosshair and captured in-game pointer never cause a monitor or
+    controller-focus transition.
+11. Game exit leaves secondary applications running.
+12. Missing/disconnected selected display produces the documented safe fallback.
+13. Logs and diagnostics identify the selected backend, output, controller
+    target, active profile, and detected glyph family.
 
 Performance, frame pacing, input latency, VRR, HDR, capture, suspend/resume, and
 audio routing are recorded separately against the existing direct Gaming Mode.
