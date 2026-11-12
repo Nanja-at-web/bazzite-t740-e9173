@@ -1,0 +1,15 @@
+[Unit]
+Description=Bazzite Hybrid controller focus prototype
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/bazzite-hybrid-focusd
+ExecStop=%h/.local/bin/bazzite-hybrid-focusctl game
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

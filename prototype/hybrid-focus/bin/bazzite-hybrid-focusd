@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Run the user-local Hybrid Focus service."""
+
+import os
+from pathlib import Path
+import signal
+import sys
+import threading
+
+
+SHARE = Path(
+    os.environ.get(
+        "BAZZITE_HYBRID_FOCUS_HOME",
+        Path.home() / ".local/share/bazzite-hybrid-focus",
+    )
+)
+sys.path.insert(0, str(SHARE / "src"))
+
+from bazzite_hybrid_focus.controller import FocusController, JsonStateStore
+from bazzite_hybrid_focus.inputplumber import InputPlumberAdapter
+from bazzite_hybrid_focus.server import serve
+
+
+def main() -> int:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        print("XDG_RUNTIME_DIR is not set", file=sys.stderr)
+        return 3
+    config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    adapter = InputPlumberAdapter(
+        profile_roots=(
+            Path("/usr/share/inputplumber/profiles"),
+            config / "inputplumber/profiles",
+        ),
+        desktop_profile=SHARE / "inputplumber/bazzite-hybrid-desktop.yaml",
+    )
+    runtime_root = Path(runtime) / "bazzite-hybrid-focus"
+    controller = FocusController(
+        adapter, JsonStateStore(runtime_root / "state.json")
+    )
+    stop = threading.Event()
+
+    def request_stop(_signum, _frame):
+        stop.set()
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    serve(runtime_root / "control.sock", controller, stop)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
