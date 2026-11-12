@@ -108,7 +108,12 @@ class InstallerTests(unittest.TestCase):
             "bazzite-hybrid-send-desktop.desktop",
             "bazzite-hybrid-return-game.desktop",
         ):
-            self.assertTrue((self.data / "applications" / launcher).is_file())
+            installed_launcher = self.data / "applications" / launcher
+            self.assertTrue(installed_launcher.is_file())
+            self.assertIn(
+                str(self.bin_home / "bazzite-hybrid-focusctl"),
+                installed_launcher.read_text(),
+            )
         log = self.systemctl_log.read_text()
         self.assertIn("--user daemon-reload", log)
         self.assertIn("--user enable --now bazzite-hybrid-focus.service", log)
@@ -138,11 +143,11 @@ class InstallerTests(unittest.TestCase):
         entries = {
             "bazzite-hybrid-send-desktop.desktop": (
                 "Controller to Desktop 2",
-                "bazzite-hybrid-focusctl desktop",
+                '"@BIN_HOME@/bazzite-hybrid-focusctl" desktop',
             ),
             "bazzite-hybrid-return-game.desktop": (
                 "Return Controller to Game",
-                "bazzite-hybrid-focusctl game",
+                '"@BIN_HOME@/bazzite-hybrid-focusctl" game',
             ),
         }
         for filename, (name, command) in entries.items():

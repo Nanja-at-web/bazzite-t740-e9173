@@ -86,6 +86,12 @@ bazzite-hybrid-focusctl toggle
 bazzite-hybrid-focusctl status
 ```
 
+For this first prototype, park the real desktop pointer on the second monitor
+before opening QAM. The QAM closes after a successful transfer; the first South
+button click can then focus the Plasma window under that pointer. Automatic
+pointer placement on the selected display belongs to the later full Hybrid
+session and is not claimed by this prototype.
+
 The desktop profile currently maps:
 
 | Controller input | Plasma action |

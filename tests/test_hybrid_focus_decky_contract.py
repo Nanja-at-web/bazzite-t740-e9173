@@ -50,6 +50,7 @@ class DeckyContractTests(unittest.TestCase):
         self.assertIn("Return Controller to Game", source)
         self.assertIn("ButtonItem", source)
         self.assertIn("toaster.toast", source)
+        self.assertIn("Navigation.CloseSideMenus", source)
         self.assertRegex(source, r"glyph_family\s*\?\?\s*[\"']neutral[\"']")
         self.assertIn("Neutral", source)
 

@@ -1,5 +1,6 @@
 import {
   ButtonItem,
+  Navigation,
   PanelSection,
   PanelSectionRow,
   staticClasses,
@@ -57,6 +58,9 @@ function Content() {
         title: "Hybrid Display Control",
         body: next.ok ? next.message || `Controller focus: ${next.target}` : next.message,
       });
+      if (next.ok) {
+        Navigation.CloseSideMenus();
+      }
     } catch (error) {
       toaster.toast({
         title: "Hybrid Display Control",

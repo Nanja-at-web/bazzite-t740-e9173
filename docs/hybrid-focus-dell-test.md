@@ -76,16 +76,19 @@ continue by changing the ordinary Bazzite Gamescope session.
 
 ## D. Perform one complete focus cycle
 
-1. While the game is running, open Decky QAM.
-2. Select **Controller to Desktop 2**.
-3. Press D-pad, South/East, bumpers, triggers, and move the right stick.
-4. Confirm the game receives **none** of those actions.
-5. Confirm the second Plasma workspace receives pointer, click, back, arrow, and
+1. Use the physical mouse to park the real pointer over a harmless test window
+   on the second Plasma monitor; do not click inside the game again.
+2. While the game is running, open Decky QAM with the controller.
+3. Select **Controller to Desktop 2** and confirm QAM closes.
+4. Press South once over the parked pointer to focus the Plasma test window.
+5. Press D-pad, South/East, bumpers, triggers, and move the right stick.
+6. Confirm the game receives **none** of those actions.
+7. Confirm the second Plasma workspace receives pointer, click, back, arrow, and
    scroll actions according to the mapping.
-6. Activate **Return Controller to Game** on the Plasma workspace using the
+8. Activate **Return Controller to Game** on the Plasma workspace using the
    controller.
-7. Confirm Steam/the game receives controller input again.
-8. Confirm Plasma no longer receives the emulated desktop actions.
+9. Confirm Steam/the game receives controller input again.
+10. Confirm Plasma no longer receives the emulated desktop actions.
 
 Any simultaneous action on both targets is an immediate failure. Use the
 physical keyboard/mouse and run `bazzite-hybrid-focusctl game` to recover.
