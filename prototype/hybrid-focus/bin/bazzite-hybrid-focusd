@@ -8,10 +8,13 @@ import sys
 import threading
 
 
+DATA_HOME = Path(
+    os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")
+)
 SHARE = Path(
     os.environ.get(
         "BAZZITE_HYBRID_FOCUS_HOME",
-        Path.home() / ".local/share/bazzite-hybrid-focus",
+        DATA_HOME / "bazzite-hybrid-focus",
     )
 )
 sys.path.insert(0, str(SHARE / "src"))

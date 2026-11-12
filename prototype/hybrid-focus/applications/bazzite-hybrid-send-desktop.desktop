@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Controller to Desktop 2
+Comment=Transfer controller input from the game to Plasma
+Exec=bazzite-hybrid-focusctl desktop
+Icon=input-gaming
+Terminal=false
+Categories=System;Utility;
+StartupNotify=false

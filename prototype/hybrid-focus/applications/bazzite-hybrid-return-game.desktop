@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Return Controller to Game
+Comment=Restore controller input to Steam and the running game
+Exec=bazzite-hybrid-focusctl game
+Icon=go-previous
+Terminal=false
+Categories=System;Utility;
+StartupNotify=false
