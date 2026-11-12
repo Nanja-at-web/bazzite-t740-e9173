@@ -1,0 +1,10 @@
+{
+  "name": "Bazzite Hybrid Focus",
+  "author": "Nanja-at-web",
+  "flags": ["debug"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["controller", "display", "bazzite"],
+    "description": "Move controller focus between Gamescope and a second desktop display."
+  }
+}
