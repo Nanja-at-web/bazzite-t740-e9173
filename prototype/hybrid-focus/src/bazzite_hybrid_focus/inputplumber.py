@@ -17,6 +17,8 @@ DEVICE_PATTERN = re.compile(
 PROFILE_NAME_PATTERN = re.compile(
     r"^\s*name\s*:\s*(?P<name>.+?)\s*$", re.MULTILINE
 )
+HEX_ID_PATTERN = re.compile(r"^(?:0x)?(?P<value>[0-9a-fA-F]{1,4})$")
+KNOWN_CONTROLLER_VENDORS = frozenset({"045e", "054c", "057e"})
 
 
 class InputPlumberError(RuntimeError):
@@ -36,6 +38,58 @@ def run_command(argv: list[str]) -> str:
     return result.stdout
 
 
+def _normalize_hex_id(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = HEX_ID_PATTERN.fullmatch(value.strip())
+    if not match:
+        return None
+    return f"{int(match.group('value'), 16):04x}"
+
+
+def resolve_source_identity(
+    source_paths: tuple[str, ...],
+    command_runner: Callable[[list[str]], str] = run_command,
+) -> tuple[str | None, str | None]:
+    """Resolve a composite controller identity without guessing from its name."""
+
+    identities: list[tuple[str, str | None]] = []
+    for source_path in source_paths:
+        try:
+            output = command_runner([
+                "udevadm",
+                "info",
+                "--query=property",
+                "--name",
+                source_path,
+            ])
+        except (InputPlumberError, OSError, subprocess.CalledProcessError):
+            continue
+        properties = {}
+        for line in output.splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                properties[key] = value
+        vendor = _normalize_hex_id(properties.get("ID_VENDOR_ID"))
+        product = _normalize_hex_id(properties.get("ID_MODEL_ID"))
+        if vendor:
+            identities.append((vendor, product))
+
+    known_vendors = {
+        vendor for vendor, _product in identities if vendor in KNOWN_CONTROLLER_VENDORS
+    }
+    if len(known_vendors) != 1:
+        return None, None
+    selected_vendor = next(iter(known_vendors))
+    products = {
+        product
+        for vendor, product in identities
+        if vendor == selected_vendor and product is not None
+    }
+    selected_product = next(iter(products)) if len(products) == 1 else None
+    return selected_vendor, selected_product
+
+
 class InputPlumberAdapter:
     def __init__(
         self,
@@ -46,10 +100,14 @@ class InputPlumberAdapter:
         desktop_profile: Path = Path(
             "/usr/share/bazzite-hybrid-focus/bazzite-hybrid-desktop.yaml"
         ),
+        identity_resolver: Callable[
+            [tuple[str, ...]], tuple[str | None, str | None]
+        ] = resolve_source_identity,
     ):
         self.command_runner = command_runner
         self.profile_roots = tuple(Path(root) for root in profile_roots)
         self.desktop_profile = Path(desktop_profile)
+        self.identity_resolver = identity_resolver
 
     def _run(self, *argv: str) -> str:
         try:
@@ -81,6 +139,31 @@ class InputPlumberAdapter:
             )
         return parts[1]
 
+    def _string_array_property(
+        self, device_path: str, property_name: str
+    ) -> tuple[str, ...]:
+        output = self._run(
+            "busctl",
+            "--system",
+            "get-property",
+            SERVICE,
+            device_path,
+            INTERFACE,
+            property_name,
+        )
+        try:
+            parts = shlex.split(output.strip())
+            count = int(parts[1])
+        except (ValueError, IndexError) as error:
+            raise InputPlumberError(
+                f"malformed {property_name} property for {device_path}"
+            ) from error
+        if not parts or parts[0] != "as" or count < 0 or len(parts[2:]) != count:
+            raise InputPlumberError(
+                f"malformed {property_name} property for {device_path}"
+            )
+        return tuple(parts[2:])
+
     def discover(self) -> list[ControllerDevice]:
         output = self._run(
             "busctl",
@@ -96,16 +179,20 @@ class InputPlumberAdapter:
                 if DEVICE_PATTERN.fullmatch(line.strip())
             }
         )
-        return [
-            ControllerDevice(
+        devices = []
+        for path in paths:
+            name = self._string_property(path, "Name")
+            profile_name = self._string_property(path, "ProfileName")
+            source_paths = self._string_array_property(path, "SourceDevicePaths")
+            vendor_id, product_id = self.identity_resolver(source_paths)
+            devices.append(ControllerDevice(
                 path=path,
-                name=self._string_property(path, "Name"),
-                vendor_id=None,
-                product_id=None,
-                profile_name=self._string_property(path, "ProfileName"),
-            )
-            for path in paths
-        ]
+                name=name,
+                vendor_id=vendor_id,
+                product_id=product_id,
+                profile_name=profile_name,
+            ))
+        return devices
 
     def resolve_profile(self, profile_name: str) -> Path:
         matches: list[Path] = []

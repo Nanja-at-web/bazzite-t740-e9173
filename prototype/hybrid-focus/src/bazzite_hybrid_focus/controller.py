@@ -129,6 +129,18 @@ class FocusController:
                 message=str(error),
             )
 
+        desktop_state = {
+            "version": 1,
+            "target": "desktop",
+            "original_profiles": {
+                path: str(profile) for path, profile in originals.items()
+            },
+        }
+        # Persist recovery intent before changing the first device. If the
+        # process stops mid-transition, startup restore still has every exact
+        # original profile available.
+        self.state_store.save(desktop_state)
+
         changed = []
         try:
             for device in devices:
@@ -144,17 +156,19 @@ class FocusController:
             message = f"desktop transition failed: {error}"
             if rollback_errors:
                 message += "; rollback failed: " + "; ".join(rollback_errors)
+            else:
+                self.state_store.save({
+                    "version": 1,
+                    "target": "game",
+                    "original_profiles": {},
+                })
             return self._status(
-                FocusTarget.GAME, devices, degraded=True, message=message
+                FocusTarget.DESKTOP if rollback_errors else FocusTarget.GAME,
+                devices,
+                degraded=True,
+                message=message,
             )
 
-        self.state_store.save({
-            "version": 1,
-            "target": "desktop",
-            "original_profiles": {
-                path: str(profile) for path, profile in originals.items()
-            },
-        })
         return self._status(
             FocusTarget.DESKTOP, devices, message="Controller → Desktop 2"
         )

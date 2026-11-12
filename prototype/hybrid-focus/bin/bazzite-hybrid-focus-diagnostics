@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Emit a bounded, read-only Hybrid Focus diagnostic report."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+SHARE = Path(
+    os.environ.get(
+        "BAZZITE_HYBRID_FOCUS_HOME",
+        DATA_HOME / "bazzite-hybrid-focus",
+    )
+)
+sys.path.insert(0, str(SHARE / "src"))
+
+from bazzite_hybrid_focus.client import request
+from bazzite_hybrid_focus.controller import JsonStateStore
+from bazzite_hybrid_focus.inputplumber import InputPlumberAdapter, InputPlumberError
+from bazzite_hybrid_focus.model import classify_glyph_family
+
+
+JOURNAL_LINE_LIMIT = 100
+COMMAND_TIMEOUT_SECONDS = 3
+
+
+def run_read_only(argv: list[str]) -> tuple[str, str]:
+    try:
+        result = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return "", str(error)
+    if result.returncode != 0:
+        return result.stdout, result.stderr.strip() or f"exit {result.returncode}"
+    return result.stdout, ""
+
+
+def main() -> int:
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    runtime_root = Path(runtime) if runtime else Path("/run/user/unavailable")
+    state_store = JsonStateStore(runtime_root / "bazzite-hybrid-focus/state.json")
+
+    try:
+        state = state_store.load()
+    except InputPlumberError as error:
+        state = {"version": 1, "target": "game", "original_profiles": {}}
+        state_error = str(error)
+    else:
+        state_error = ""
+
+    adapter = InputPlumberAdapter(command_runner=lambda argv: run_read_only(argv)[0])
+    try:
+        devices = adapter.discover()
+        discovery_error = ""
+    except InputPlumberError as error:
+        devices = []
+        discovery_error = str(error)
+
+    original_profiles = state.get("original_profiles", {})
+    controllers = [
+        {
+            "path": device.path,
+            "name": device.name,
+            "active_profile": device.profile_name,
+            "original_profile": (
+                Path(original_profiles[device.path]).name
+                if device.path in original_profiles
+                else None
+            ),
+        }
+        for device in devices
+    ]
+
+    socket_error = ""
+    response = None
+    if runtime:
+        try:
+            response = request(
+                runtime_root / "bazzite-hybrid-focus/control.sock", "status"
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            socket_error = str(error)
+    else:
+        socket_error = "XDG_RUNTIME_DIR is not set"
+
+    errors = [item for item in (state_error, discovery_error, socket_error) if item]
+    focus = {
+        "target": (
+            response.get("target", state["target"]) if response else state["target"]
+        ),
+        "glyph_family": (
+            response.get("glyph_family", classify_glyph_family(devices))
+            if response
+            else classify_glyph_family(devices)
+        ),
+        "degraded": bool(errors) or bool(response and response.get("degraded")),
+        "message": (
+            response.get("message", "") if response and not errors else "; ".join(errors)
+        ),
+    }
+
+    service_stdout, service_error = run_read_only(
+        ["systemctl", "--user", "is-active", "bazzite-hybrid-focus.service"]
+    )
+    service_state = service_stdout.strip() or f"unavailable: {service_error}"
+
+    journal_stdout, journal_error = run_read_only([
+        "journalctl",
+        "--user",
+        "--unit",
+        "bazzite-hybrid-focus.service",
+        "--lines",
+        str(JOURNAL_LINE_LIMIT),
+        "--no-pager",
+        "--output=short-iso",
+    ])
+    journal = journal_stdout.splitlines()[-JOURNAL_LINE_LIMIT:]
+    if journal_error and not journal:
+        journal = [f"journal unavailable: {journal_error}"]
+
+    report = {
+        "schema_version": 1,
+        "service_state": service_state,
+        "focus": focus,
+        "controllers": controllers,
+        "journal": journal,
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

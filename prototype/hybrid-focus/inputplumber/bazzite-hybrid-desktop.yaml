@@ -61,16 +61,14 @@ mapping:
         button: RightBumper
     target_events:
       - mouse:
-          wheel:
-            direction: up
+          button: WheelUp
   - name: Scroll Down
     source_event:
       gamepad:
         button: LeftBumper
     target_events:
       - mouse:
-          wheel:
-            direction: down
+          button: WheelDown
   - name: Primary Click
     source_event:
       gamepad:

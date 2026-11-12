@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -101,6 +102,34 @@ class MetadataTests(unittest.TestCase):
 
 
 class WiringTests(unittest.TestCase):
+    def test_hybrid_prototype_does_not_change_release_inputs(self):
+        expected = {
+            "Containerfile":
+                "57b687d068d75e145a9f68d11e7cb96df48f538b02cf760e56e173b3dbd6015e",
+            "system_files/etc/gamescope-session-plus/sessions.d/steam":
+                "bfa9fc32090f794eafe6e496812bc54b2d56382905d2dc8b094442d7b165dbd5",
+            "image-lock.json":
+                "230acb8bf6691ee0b5e45547d990477223933ebc666432db80dc3d7891747fc4",
+            ".github/workflows/build.yml":
+                "2f787653fd70a6327f5d0e073cf76c38b26dc0af66630a0bfc993492c4e91e69",
+            ".github/workflows/build-disk.yml":
+                "1b52d044d049aa55f4d1c0f9be31d0413794451cfb350ec4e9e8509cb8e44cb4",
+        }
+        for relative_path, digest in expected.items():
+            with self.subTest(path=relative_path):
+                actual = hashlib.sha256((ROOT / relative_path).read_bytes()).hexdigest()
+                self.assertEqual(actual, digest)
+
+    def test_every_iso_workflow_is_manual_only(self):
+        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
+            source = workflow.read_text()
+            if "titanoboa" not in source and "*.iso" not in source:
+                continue
+            with self.subTest(workflow=workflow.name):
+                self.assertIn("\n  workflow_dispatch:\n", source)
+                for automatic_trigger in ("push", "pull_request", "schedule"):
+                    self.assertNotIn(f"\n  {automatic_trigger}:", source)
+
     def test_version_generator_uses_locked_bazzite_version(self):
         script = ROOT / "scripts/build-version.py"
         self.assertTrue(script.exists(), "missing build version generator")

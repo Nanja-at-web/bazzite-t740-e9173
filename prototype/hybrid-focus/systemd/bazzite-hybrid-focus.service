@@ -5,8 +5,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/bazzite-hybrid-focusd
-ExecStop=%h/.local/bin/bazzite-hybrid-focusctl game
+ExecStart="@BIN_HOME@/bazzite-hybrid-focusd"
+ExecStop="@BIN_HOME@/bazzite-hybrid-focusctl" game
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=5

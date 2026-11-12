@@ -18,11 +18,14 @@ from bazzite_hybrid_focus.model import ControllerDevice, FocusTarget  # noqa: E4
 
 
 class FakeAdapter:
-    def __init__(self, devices, profiles, fail_on=None, desktop_profile=None):
+    def __init__(
+        self, devices, profiles, fail_on=None, desktop_profile=None, events=None
+    ):
         self.devices = devices
         self.profiles = profiles
         self.fail_on = fail_on
         self.loads = []
+        self.events = events
         self.desktop_profile = desktop_profile or Path("/profiles/desktop.yaml")
 
     def discover(self):
@@ -36,6 +39,8 @@ class FakeAdapter:
     def load_profile(self, device_path, profile_path):
         call = (device_path, Path(profile_path))
         self.loads.append(call)
+        if self.events is not None:
+            self.events.append(("load", call))
         if call == self.fail_on:
             raise InputPlumberError("load failed")
 
@@ -81,6 +86,20 @@ class FocusControllerTests(unittest.TestCase):
         )
         self.assertEqual(os.stat(self.state_path).st_mode & 0o777, 0o600)
 
+    def test_desktop_recovery_intent_is_durable_before_first_profile_load(self):
+        events = []
+
+        class RecordingStore(JsonStateStore):
+            def save(self, data):
+                events.append(("save", data["target"]))
+                super().save(data)
+
+        adapter = FakeAdapter(self.devices, self.profiles, events=events)
+        controller = FocusController(adapter, RecordingStore(self.state_path))
+        controller.set_target(FocusTarget.DESKTOP)
+        self.assertEqual(events[0], ("save", "desktop"))
+        self.assertEqual(events[1][0], "load")
+
     def test_desktop_to_game_restores_exact_original_profiles(self):
         controller, adapter = self.controller()
         controller.set_target(FocusTarget.DESKTOP)
@@ -94,6 +113,9 @@ class FocusControllerTests(unittest.TestCase):
                 ("/device1", Path("/profiles/custom.yaml")),
             ],
         )
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["target"], "game")
+        self.assertEqual(state["original_profiles"], {})
 
     def test_idempotent_target_does_not_reload_profiles(self):
         controller, adapter = self.controller()
@@ -128,6 +150,9 @@ class FocusControllerTests(unittest.TestCase):
                 ("/device0", Path("/profiles/default.yaml")),
             ],
         )
+        state = json.loads(self.state_path.read_text())
+        self.assertEqual(state["target"], "game")
+        self.assertEqual(state["original_profiles"], {})
 
     def test_toggle_switches_between_targets(self):
         controller, _ = self.controller()

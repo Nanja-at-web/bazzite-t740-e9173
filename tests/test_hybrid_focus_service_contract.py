@@ -99,6 +99,27 @@ class FakeListener:
         self.closed = True
 
 
+class TimeoutTrackingConnection:
+    def __init__(self):
+        self.timeout = None
+        self.responses = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def recv(self, _size):
+        return b'{"version":1,"command":"status"}'
+
+    def sendall(self, payload):
+        self.responses.append(payload)
+
+
 class ServiceContractTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -142,6 +163,17 @@ class ServiceContractTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["target"], "desktop")
         self.assertIn("desktop", controller.calls)
+
+    def test_each_client_gets_a_bounded_read_timeout(self):
+        connection = TimeoutTrackingConnection()
+        handle_connection(
+            connection,
+            FakeController(),
+            credential_checker=lambda _connection: True,
+        )
+        self.assertIsNotNone(connection.timeout)
+        self.assertGreater(connection.timeout, 0)
+        self.assertTrue(connection.responses)
 
     def test_peer_uid_rejection_causes_no_state_change(self):
         controller = FakeController()

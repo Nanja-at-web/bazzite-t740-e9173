@@ -14,7 +14,7 @@ fi
 
 systemctl --user disable --now bazzite-hybrid-focus.service || true
 
-rm -f "${bin_home}/bazzite-hybrid-focusd" "${bin_home}/bazzite-hybrid-focusctl" "${unit}" "${data_home}/applications/bazzite-hybrid-send-desktop.desktop" "${data_home}/applications/bazzite-hybrid-return-game.desktop"
+rm -f "${bin_home}/bazzite-hybrid-focusd" "${bin_home}/bazzite-hybrid-focusctl" "${bin_home}/bazzite-hybrid-focus-diagnostics" "${unit}" "${data_home}/applications/bazzite-hybrid-send-desktop.desktop" "${data_home}/applications/bazzite-hybrid-return-game.desktop"
 rm -rf -- "${install_root}"
 
 systemctl --user daemon-reload

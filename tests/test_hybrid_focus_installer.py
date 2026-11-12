@@ -71,7 +71,11 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn("sudo", script.read_text())
 
     def test_entry_points_follow_xdg_data_home(self):
-        for executable in ("bazzite-hybrid-focusd", "bazzite-hybrid-focusctl"):
+        for executable in (
+            "bazzite-hybrid-focusd",
+            "bazzite-hybrid-focusctl",
+            "bazzite-hybrid-focus-diagnostics",
+        ):
             source = (PROTOTYPE / "bin" / executable).read_text()
             self.assertIn("XDG_DATA_HOME", source)
 
@@ -83,13 +87,23 @@ class InstallerTests(unittest.TestCase):
         self.assertTrue(
             (install_root / "inputplumber/bazzite-hybrid-desktop.yaml").is_file()
         )
-        for executable in ("bazzite-hybrid-focusd", "bazzite-hybrid-focusctl"):
+        for executable in (
+            "bazzite-hybrid-focusd",
+            "bazzite-hybrid-focusctl",
+            "bazzite-hybrid-focus-diagnostics",
+        ):
             path = self.bin_home / executable
             self.assertTrue(path.is_file())
             self.assertTrue(stat.S_IMODE(path.stat().st_mode) & stat.S_IXUSR)
         self.assertTrue(
             (self.config / "systemd/user/bazzite-hybrid-focus.service").is_file()
         )
+        installed_unit = (
+            self.config / "systemd/user/bazzite-hybrid-focus.service"
+        ).read_text()
+        self.assertIn(str(self.bin_home / "bazzite-hybrid-focusd"), installed_unit)
+        self.assertIn(str(self.bin_home / "bazzite-hybrid-focusctl"), installed_unit)
+        self.assertNotIn("@BIN_HOME@", installed_unit)
         for launcher in (
             "bazzite-hybrid-send-desktop.desktop",
             "bazzite-hybrid-return-game.desktop",
@@ -113,6 +127,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(unrelated.read_text(), "keep")
         self.assertFalse((self.data / "bazzite-hybrid-focus").exists())
         self.assertFalse((self.bin_home / "bazzite-hybrid-focusd").exists())
+        self.assertFalse(
+            (self.bin_home / "bazzite-hybrid-focus-diagnostics").exists()
+        )
         self.assertFalse(
             (self.config / "systemd/user/bazzite-hybrid-focus.service").exists()
         )

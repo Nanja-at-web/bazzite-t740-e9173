@@ -22,6 +22,7 @@ from .protocol import (
 
 
 CredentialChecker = Callable[[socket.socket], bool]
+REQUEST_TIMEOUT_SECONDS = 2.0
 
 
 def same_user(connection: socket.socket) -> bool:
@@ -68,7 +69,12 @@ def handle_connection(
     transition_lock: threading.Lock | None = None,
 ) -> None:
     with connection:
-        payload = connection.recv(MAX_REQUEST_BYTES + 1)
+        connection.settimeout(REQUEST_TIMEOUT_SECONDS)
+        try:
+            payload = connection.recv(MAX_REQUEST_BYTES + 1)
+        except TimeoutError:
+            connection.sendall(encode_error("request timed out"))
+            return
         if not credential_checker(connection):
             connection.sendall(encode_error("peer UID rejected"))
             return
