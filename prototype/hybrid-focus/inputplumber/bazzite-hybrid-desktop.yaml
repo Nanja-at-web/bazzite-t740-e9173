@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/device_profile_v1.json
+version: 1
+kind: DeviceProfile
+name: Bazzite Hybrid Desktop
+description: Exclusive controller mapping for a secondary Plasma workspace
+
+target_devices:
+  - keyboard
+  - mouse
+
+mapping:
+  - name: Pointer
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+    target_events:
+      - mouse:
+          motion:
+            speed_pps: 800
+  - name: Activate
+    source_event:
+      gamepad:
+        button: South
+    target_events:
+      - mouse:
+          button: Left
+  - name: Back
+    source_event:
+      gamepad:
+        button: East
+    target_events:
+      - keyboard: KeyEsc
+  - name: Up
+    source_event:
+      gamepad:
+        button: DPadUp
+    target_events:
+      - keyboard: KeyUp
+  - name: Down
+    source_event:
+      gamepad:
+        button: DPadDown
+    target_events:
+      - keyboard: KeyDown
+  - name: Left
+    source_event:
+      gamepad:
+        button: DPadLeft
+    target_events:
+      - keyboard: KeyLeft
+  - name: Right
+    source_event:
+      gamepad:
+        button: DPadRight
+    target_events:
+      - keyboard: KeyRight
+  - name: Scroll Up
+    source_event:
+      gamepad:
+        button: RightBumper
+    target_events:
+      - mouse:
+          wheel:
+            direction: up
+  - name: Scroll Down
+    source_event:
+      gamepad:
+        button: LeftBumper
+    target_events:
+      - mouse:
+          wheel:
+            direction: down
+  - name: Primary Click
+    source_event:
+      gamepad:
+        trigger:
+          name: RightTrigger
+          deadzone: 0.2
+    target_events:
+      - mouse:
+          button: Left
+  - name: Secondary Click
+    source_event:
+      gamepad:
+        trigger:
+          name: LeftTrigger
+          deadzone: 0.2
+    target_events:
+      - mouse:
+          button: Right
