@@ -59,10 +59,16 @@ ihren passenden Freigabeumfang, da bestehende Tests temporäre Dateien und
 simulierte Dienstumgebungen verwenden können. Laufzeitadapter, Launcher,
 Installation und Hardwareversuche erfordern eine eigene konkrete Freigabe.
 
-Der aktuelle Change-Classifier behandelt auch diesen README-Pfad und die neuen
-Display-Quell-/Testpfade als unbekannte Kategorie G und blockiert sie.
-Eine spätere Classifieränderung benötigt eigene Policytests und Freigabe;
-diese Dokumentation erteilt keine Build-, Veröffentlichungs- oder ISO-Freigabe.
+Der aktuelle Change-Classifier ordnet `prototype/hybrid-display/**`
+(einschließlich dieses README) und `tests/test_hybrid_display_*.py` der
+Kategorie H für den isolierten Hybrid-Display-Prototyp und seine Repositorytests zu.
+H-only bedeutet Tests-only: kein Containerbau, kein Publish und kein ISO-Lauf,
+auch bei manuellem Dispatch.
+Die Aufnahme in den Classifier bedeutet keine Produkt-, Session- oder
+Releaseintegration und keine Hardwarevalidierung.
+Unbekannte andere Pfade bleiben Kategorie G und fail-closed blockiert;
+H+G bleibt blockierend.
+Diese Dokumentation erteilt keine Build-, Veröffentlichungs- oder ISO-Freigabe.
 
 ## Verbindliche Grundlage
 

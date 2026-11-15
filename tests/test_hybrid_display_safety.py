@@ -139,6 +139,144 @@ def python_content(source):
     return '\n'.join(values)
 
 
+def policy_python_execution_content(source):
+    """Follow policy data into imports and unknown/executable consumers.
+
+    Only the explicit policy files use this bounded AST analysis. Exact fields
+    stay separate from aggregate reads; finite literal loop keys are resolved.
+    Unknown consumers and dynamic keys remain conservative. This is not a
+    general Python security analyzer.
+    """
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    bindings, domains = {}, {}
+    assignments = []
+    rebound = {node.id for node in nodes if isinstance(node, ast.Name)
+               and isinstance(node.ctx, ast.Store)}
+    rebound.update(node.arg for node in nodes if isinstance(node, ast.arg))
+    rebound.update(ast.unparse(node) for node in nodes
+                   if isinstance(node, (ast.Attribute, ast.Subscript))
+                   and isinstance(node.ctx, ast.Store))
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            rebound.update(alias.asname or alias.name.split('.')[0] for alias in node.names
+                           if alias.asname or alias.name not in {'re', 'json'})
+        elif isinstance(node, ast.ImportFrom):
+            rebound.update(alias.asname or alias.name for alias in node.names)
+        if isinstance(node, ast.Assign):
+            assignments.extend((target, node.value) for target in node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr, ast.AugAssign)) and node.value is not None:
+            assignments.append((node.target, node.value))
+        elif isinstance(node, (ast.For, ast.comprehension)):
+            assignments.append((node.target, node.iter))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            rebound.add(node.name)
+            assignments.extend((ast.Name(id=node.name), item.value) for item in ast.walk(node)
+                               if isinstance(item, ast.Return) and item.value is not None)
+
+    for target, value in assignments:
+        if isinstance(target, ast.Name):
+            literals = value.elts if isinstance(value, (ast.Tuple, ast.List)) else [value]
+            known = all(isinstance(item, ast.Constant) and isinstance(item.value, (str, int))
+                        for item in literals)
+            if not known or domains.get(target.id) is None and target.id in domains:
+                domains[target.id] = None
+            else:
+                domains.setdefault(target.id, set()).update(item.value for item in literals)
+
+    def field_refs(key):
+        found = set(bindings.get(key, ()))
+        for name, refs in bindings.items():
+            if name.startswith((key + '[', key + '.')):
+                found.update(refs)
+        return found
+
+    def references(node):
+        if isinstance(node, ast.Constant):
+            return {node.value} if isinstance(node.value, str) and DISPLAY_REF.search(node.value) else set()
+        if isinstance(node, ast.Name):
+            return field_refs(node.id)
+        if isinstance(node, ast.Subscript):
+            base = ast.unparse(node.value)
+            keys = ({node.slice.value} if isinstance(node.slice, ast.Constant) else
+                    domains.get(node.slice.id) if isinstance(node.slice, ast.Name) else None)
+            if keys is not None:
+                found = set(bindings.get(base, ()))
+                for key in keys:
+                    access = ast.Subscript(value=node.value, slice=ast.Constant(value=key))
+                    found.update(field_refs(ast.unparse(access)))
+                return found
+        found = set()
+        for child in ast.iter_child_nodes(node):
+            found.update(references(child))
+        return found
+
+    while True:
+        before = {key: set(value) for key, value in bindings.items()}
+        for target, value in assignments:
+            names = ([target.id] if isinstance(target, ast.Name) else
+                     [ast.unparse(target)] if isinstance(target, (ast.Subscript, ast.Attribute)) else
+                     [name.id for name in ast.walk(target) if isinstance(name, ast.Name)])
+            for name in names:
+                # Preserve known field structure across aliases and returned
+                # dictionaries; do not flatten a summary into every bool field.
+                origin = (value.id if isinstance(value, ast.Name) else
+                          value.func.id if isinstance(value, ast.Call)
+                          and isinstance(value.func, ast.Name) else None)
+                fields = {key[len(origin):]: set(refs) for key, refs in bindings.items()
+                          if origin and key.startswith((origin + '[', origin + '.'))}
+                refs = bindings.get(origin, set()) if fields else references(value)
+                bindings.setdefault(name, set()).update(refs)
+                for suffix, refs in fields.items():
+                    bindings.setdefault(name + suffix, set()).update(refs)
+        if before == bindings:
+            break
+
+    data_calls = {'path.startswith', 'path.endswith', 're.fullmatch', 're.search',
+                  'str', 'repr', 'bool', 'len', 'list', 'tuple', 'set', 'dict', 'sorted',
+                  'json.dumps', 'print', 'policy.path_class', 'policy.classify',
+                  'self.policy.path_class', 'self.policy.classify'}
+    dicts = {target.id for target, value in assignments if isinstance(target, ast.Name)
+             and (isinstance(value, ast.Dict) or isinstance(value, ast.Call)
+                  and isinstance(value.func, ast.Name) and value.func.id == 'dict')}
+    execution = []
+    for node in nodes:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            execution.extend(alias.name for alias in node.names)
+            if isinstance(node, ast.ImportFrom):
+                execution.append(node.module or '')
+        elif isinstance(node, ast.Call):
+            callee = ast.unparse(node.func)
+            root = callee.split('.')[0]
+            assertion = (isinstance(node.func, ast.Attribute)
+                         and isinstance(node.func.value, ast.Name)
+                         and node.func.value.id == 'self'
+                         and node.func.attr.startswith('assert'))
+            dict_operation = (isinstance(node.func, ast.Attribute)
+                              and isinstance(node.func.value, ast.Name)
+                              and node.func.value.id in dicts
+                              and node.func.attr in {'get', 'items', 'keys', 'values', 'update', 'setdefault'})
+            if dict_operation and node.func.attr in {'update', 'setdefault'}:
+                # Unknown mutation shapes are not silently exempted.
+                dict_operation = not any(references(argument) for argument in
+                    [*node.args, *(keyword.value for keyword in node.keywords)])
+            path_predicate = callee in {'path.startswith', 'path.endswith'}
+            if callee not in rebound and (
+                (callee in data_calls and (root not in rebound or path_predicate)) or assertion or dict_operation
+            ):
+                continue
+            execution.append(callee)
+            # A function's return value is data until passed to a consumer.
+            # Receiver references still matter (e.g. Path(...).write_text()).
+            consumed = set()
+            if isinstance(node.func, ast.Attribute):
+                consumed.update(references(node.func.value))
+            for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
+                consumed.update(references(argument))
+            execution.extend('execution argument: ' + ref + ' (consumed)' for ref in sorted(consumed))
+    return '\n'.join(execution)
+
+
 def javascript_content(source):
     # A lexical scan, not a JS evaluator; preserve strings containing // or /*.
     string = r'''"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`'''
@@ -193,7 +331,11 @@ def wiring_violations(path, source, contract='release'):
     if 'Containerfile' in Path(path).name:
         content = container_content(source)
     elif path.endswith('.py'):
-        content = python_content(source)
+        policy_files = {'scripts/classify-container-changes.py',
+                        'tests/test_container_workflow_policy.py',
+                        'tests/test_hybrid_display_safety.py'}
+        content = (policy_python_execution_content(source) if path in policy_files
+                   else python_content(source))
     elif path.endswith(('.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs')):
         content = javascript_content(source)
     elif path.endswith(('.service', '.desktop', '.conf', '.override', '.rules')) and re.search(r'^\s*\[', source, re.M):
@@ -309,6 +451,21 @@ def current_readme():
 
 
 class ReadmeContracts(unittest.TestCase):
+    def test_classifier_category_h_is_tests_only_without_product_integration(self):
+        text = re.sub(r'\s+', ' ', current_readme().replace('`', '').casefold())
+        label = DISPLAY + '/README.md: classifier-documentation: '
+        self.assertRegex(text, r'\bkategorie h\b', label + 'expected H, not the outdated unknown G policy')
+        for path in ('prototype/hybrid-display/**', 'tests/test_hybrid_display_*.py'):
+            self.assertIn(path, text, label + 'missing prototype/test scope')
+        clauses = re.split(r'[.!?]', text)
+        self.assertTrue(any('h-only' in clause and 'tests-only' in clause for clause in clauses), label + 'H-only')
+        for effect in ('containerbau', 'publish', 'iso-lauf'):
+            self.assertTrue(any(re.search(r'\bkein\w*\b', clause) and effect in clause
+                                and 'h-only' in clause for clause in clauses), label + effect)
+        self.assertTrue(any('classifier' in clause and 'keine' in clause
+                            and all(term in clause for term in ('produkt-', 'session-', 'releaseintegration'))
+                            for clause in clauses), label + 'classification is not integration')
+
     def test_safe_editorial_changes_and_relative_links(self):
         source = current_readme()
         self.assertEqual(readme_issues(source.replace('\n', '  \n') + '\nWeitere sichere Dokumentation.\n'), [])
@@ -339,7 +496,7 @@ class ReadmeContracts(unittest.TestCase):
 class RepositoryRegressionTests(unittest.TestCase):
     """Already-correct repository state: regression evidence, not RED/GREEN."""
 
-    def test_classifier_display_paths_remain_fail_closed_without_git_execution(self):
+    def test_classifier_display_paths_are_isolated_tests_only_without_git_execution(self):
         relative = 'scripts/classify-container-changes.py'
         spec = importlib.util.spec_from_file_location('display_safety_classifier', ROOT / relative)
         policy = importlib.util.module_from_spec(spec)
@@ -362,14 +519,36 @@ class RepositoryRegressionTests(unittest.TestCase):
             paths.reverse()
             second = policy.classify(ROOT, 'push', base, head, 'refs/heads/main')
         for result in (first, second):
-            self.assertTrue(result['blocking'], relative + ': classifier: must block')
-            self.assertEqual(result['unknown'], sorted(paths), relative + ': classifier: complete unknown paths')
-            self.assertEqual(result['classes'], ['G'])
-            for key in ('run_tests', 'build_container', 'release_candidate', 'run_iso'):
+            self.assertFalse(result['blocking'], relative + ': classifier: isolated display must run tests')
+            self.assertEqual(result['unknown'], [])
+            self.assertTrue(result['run_tests'])
+            self.assertEqual(result['classes'], ['H'])
+            for key in ('build_container', 'release_candidate', 'run_iso'):
                 self.assertFalse(result[key], relative + ': classifier: ' + key)
         self.assertEqual(first['unknown'], second['unknown'])
         self.assertEqual(policy.path_class('docs/superpowers/specs/example.md'), 'E')
-        self.assertEqual(policy.path_class(DISPLAY + '/README.md'), 'G')
+        self.assertEqual(policy.path_class(DISPLAY + '/README.md'), 'H')
+
+    def test_classifier_unknown_and_display_mixed_paths_remain_blocked(self):
+        spec = importlib.util.spec_from_file_location(
+            'display_unknown_policy', ROOT / 'scripts/classify-container-changes.py')
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        unknown = 'experimental/unclassified-feature.txt'
+        for paths in ([unknown], [DISPLAY + '/README.md', unknown]):
+            def fake_git(repo, *args):
+                if args[0] in {'cat-file', 'merge-base'}:
+                    return b''
+                self.assertEqual(args[0], 'diff')
+                return ''.join('A\0' + path + '\0' for path in paths).encode()
+
+            with patch.object(policy, 'git', side_effect=fake_git):
+                result = policy.classify(ROOT, 'push', 'a' * 40, 'b' * 40, 'refs/heads/main')
+            self.assertTrue(result['blocking'])
+            self.assertIn('G', result['classes'])
+            self.assertEqual(result['unknown'], [unknown])
+            for key in ('run_tests', 'build_container', 'release_candidate', 'run_iso'):
+                self.assertFalse(result[key], key)
 
     def test_release_and_payload_sources_have_no_display_integration(self):
         paths = files_under('Containerfile', 'Justfile', 'image-lock.json', 'image-template.env',
@@ -398,6 +577,98 @@ class RepositoryRegressionTests(unittest.TestCase):
 
 
 class StructuralFixtures(unittest.TestCase):
+    def test_policy_path_rules_are_data_only_in_explicit_policy_files(self):
+        source = (
+            "def path_class(path):\n"
+            "    if path.startswith('prototype/hybrid-display/'):\n"
+            "        return 'H'\n"
+            "    return 'G'\n"
+        )
+        for path in ('scripts/classify-container-changes.py',
+                     'tests/test_container_workflow_policy.py',
+                     'tests/test_hybrid_display_safety.py'):
+            with self.subTest(path=path):
+                self.assertEqual(wiring_violations(path, source), [])
+        self.assertTrue(wiring_violations('scripts/build.py', source))
+
+    def test_policy_test_path_fixtures_are_not_runtime_integration(self):
+        source = (
+            "paths = ['prototype/hybrid-display/src/hybrid_display/cli.py',\n"
+            "         'tests/test_hybrid_display_cli.py']\n"
+            "self.assertEqual(policy.path_class(paths[0]), 'H')\n"
+        )
+        for path in ('tests/test_container_workflow_policy.py', 'tests/test_hybrid_display_safety.py'):
+            self.assertEqual(wiring_violations(path, source), [])
+
+    def test_policy_files_still_reject_imports_calls_and_indirect_execution(self):
+        for source in (
+            'import hybrid_display.cli\n',
+            'from hybrid_display import cli\n',
+            "import importlib\nimportlib.import_module('hybrid_display.cli')\n",
+            "import subprocess\nsubprocess.run(['python3', '-m', 'hybrid_display.cli'])\n",
+            "import os\nos.system('python3 prototype/hybrid-display/cli.py')\n",
+            "exec('import hybrid_display.cli')\n",
+            "argv = ['python3', 'prototype/hybrid-display/cli.py']\nsubprocess.run(argv)\n",
+            "target = 'prototype/hybrid-display/cli.py'\nlauncher(target)\n",
+            "unit = '[Service]\\nExecStart=hybrid-display-run'\nPath('display.service').write_text(unit)\n",
+        ):
+            for path in ('scripts/classify-container-changes.py',
+                         'tests/test_container_workflow_policy.py',
+                         'tests/test_hybrid_display_safety.py'):
+                with self.subTest(path=path, source=source):
+                    self.assertTrue(wiring_violations(path, source))
+
+    def test_runtime_payload_session_and_workflow_references_still_rejected(self):
+        for path, source in (
+            ('system_files/usr/bin/start.py', "target = 'prototype/hybrid-display/cli.py'\n"),
+            ('installer/install.py', "payload = 'prototype/hybrid-display'\n"),
+            ('system_files/display.service', '[Service]\nExecStart=hybrid-display-run\n'),
+            ('system_files/etc/gamescope-session-plus/sessions.d/steam', 'exec hybrid-display-run\n'),
+            ('Containerfile', 'COPY prototype/hybrid-display /payload\n'),
+            ('Containerfile', 'ADD prototype/hybrid-display /payload\n'),
+            ('Containerfile', 'RUN python3 -m hybrid_display.cli\n'),
+            ('.github/workflows/example.yml', 'jobs:\n  build:\n    steps:\n      - run: python3 -m hybrid_display.cli\n'),
+            ('.github/workflows/example.yml', 'run: cp -r prototype/hybrid-display /payload\n'),
+            ('installer/build.sh', 'install prototype/hybrid-display/cli.py /usr/bin/display\n'),
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(wiring_violations(path, source))
+
+    def test_policy_execution_cannot_hide_in_mutation_returns_or_shadowed_calls(self):
+        cases = (
+            "argv = ['python3', '-m', '']\nargv[2] = 'hybrid_display.cli'\nsubprocess.run(argv)\n",
+            "command = 'python3 '\ncommand += 'prototype/hybrid-display/cli.py'\nos.system(command)\n",
+            "def module_name():\n    return 'hybrid_display.cli'\nimportlib.import_module(module_name())\n",
+            "print = subprocess.run\nprint(['python3', '-m', 'hybrid_display.cli'])\n",
+            "def execute(print):\n    print(['python3', '-m', 'hybrid_display.cli'])\n",
+            "import subprocess as re\nre.fullmatch('hybrid_display.cli')\n",
+            "re.fullmatch = subprocess.run\nre.fullmatch(['python3', '-m', 'hybrid_display.cli'])\n",
+            "subprocess.run(['/usr/bin/hybrid-display'])\n",
+            "os.system('exec hybrid-display')\n",
+            "subprocess.run(['python3', 'hybrid-display.py'])\n",
+            "p = {}\np.update(module='hybrid_display.cli')\nimportlib.import_module(p['module'])\n",
+            "p = {}\np.setdefault('module', 'hybrid_display.cli')\nimportlib.import_module(p['module'])\n",
+        )
+        for path in ('scripts/classify-container-changes.py',
+                     'tests/test_container_workflow_policy.py',
+                     'tests/test_hybrid_display_safety.py'):
+            for source in cases:
+                with self.subTest(path=path, source=source):
+                    self.assertTrue(wiring_violations(path, source))
+
+    def test_policy_field_reads_and_finite_output_keys_remain_data(self):
+        source = (
+            "result = {}\n"
+            "result['summary'] = 'Policy for prototype/hybrid-display/cli.py'\n"
+            "result['run_tests'] = True\n"
+            "for key in ('run_tests', 'run_iso'):\n"
+            "    stream.write(str(result[key]))\n"
+        )
+        self.assertEqual(wiring_violations('scripts/classify-container-changes.py', source), [])
+        for extra in ("subprocess.run(result)\n", "subprocess.run(result['summary'])\n",
+                      "stream.write(result[unknown_key])\n"):
+            self.assertTrue(wiring_violations('scripts/classify-container-changes.py', source + extra))
+
     def test_python_keyword_dictionary_can_be_functional(self):
         self.assertTrue(wiring_violations('scripts/build.py',
             "import importlib\nimportlib.import_module(**{'name': 'hybrid_display.cli'})"))

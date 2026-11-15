@@ -7,6 +7,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts/classify-container-changes.py'
@@ -173,6 +176,110 @@ class PolicyTests(unittest.TestCase):
     def test_non_main_push_does_not_release(self):
         self.write('Containerfile', 'content')
         self.assertFalse(self.decision(ref='refs/heads/other')['release_candidate'])
+
+    DISPLAY_PATHS = (
+        'prototype/hybrid-display/src/hybrid_display/model.py',
+        'prototype/hybrid-display/src/hybrid_display/cli.py',
+        'prototype/hybrid-display/src/hybrid_display/runner.py',
+        'prototype/hybrid-display/README.md',
+        'tests/test_hybrid_display_cli.py',
+        'tests/test_hybrid_display_safety.py',
+    )
+
+    def test_each_display_path_is_tests_only_for_every_event(self):
+        for path in self.DISPLAY_PATHS:
+            self.write(path, 'isolated change')
+            head = self.commit()
+            for event in ('push', 'pull_request', 'workflow_dispatch'):
+                for ref in ('refs/heads/main', 'refs/heads/feature/example'):
+                    with self.subTest(path=path, event=event, ref=ref):
+                        result = self.policy.classify(self.repo, event, self.base, head, ref)
+                        self.assertEqual(result['classes'], ['H'])
+                        self.assertFalse(result['blocking'])
+                        self.assertTrue(result['run_tests'])
+                        for key in ('build_container', 'release_candidate', 'run_iso'):
+                            self.assertFalse(result[key], key)
+                        self.assertIn('isolated Hybrid-Display', result['summary'])
+            self.base = head
+
+    def test_display_mixed_class_priorities(self):
+        for extra, classes, build, release, blocked in (
+            ('prototype/hybrid-display/src/hybrid_display/runner.py', ['H'], False, False, False),
+            ('docs/example.md', ['E', 'H'], False, False, False),
+            ('tests/test_build_provenance.py', ['D', 'H'], False, False, False),
+            ('prototype/hybrid-focus/example.py', ['F', 'H'], False, False, False),
+            ('.github/workflows/build.yml', ['B', 'H'], True, False, False),
+            ('Containerfile', ['A', 'H'], True, True, False),
+            ('experimental/unclassified-feature.txt', ['G', 'H'], False, False, True),
+            ('.github/workflows/build-disk.yml', ['C', 'H'], False, False, False),
+        ):
+            self.write(self.DISPLAY_PATHS[0], extra)
+            self.write(extra, 'changed')
+            head = self.commit()
+            for event in ('push', 'pull_request', 'workflow_dispatch'):
+                with self.subTest(extra=extra, event=event):
+                    result = self.policy.classify(self.repo, event, self.base, head, 'refs/heads/main')
+                    self.assertEqual(result['classes'], classes)
+                    self.assertEqual(result['blocking'], blocked)
+                    self.assertEqual(result['run_tests'], not blocked)
+                    self.assertEqual(result['build_container'],
+                                     build or (event == 'workflow_dispatch' and classes == ['C', 'H']))
+                    self.assertEqual(result['release_candidate'], release and event == 'push')
+                    self.assertFalse(result['run_iso'])
+            self.base = head
+
+    def test_display_paths_do_not_allow_other_prototypes_or_tests(self):
+        for path in ('prototype/other/a.py', 'prototype/hybrid-display-other/a.py',
+                     'tests/other.py', 'tests/test_hybrid_display_cli.py/extra',
+                     'prototype/hybrid-display/../escape.py', '/prototype/hybrid-display/a.py',
+                     'experimental/unclassified-feature.txt'):
+            with self.subTest(path=path):
+                self.assertEqual(self.policy.path_class(path), 'G')
+
+    def test_display_order_and_duplicates_do_not_change_decision(self):
+        def classify(paths):
+            raw = ''.join('M\0' + path + '\0' for path in paths).encode()
+            with patch.object(self.policy, 'git', side_effect=lambda repo, *args:
+                              raw if args[0] == 'diff' else b''):
+                return self.policy.classify(self.repo, 'push', 'a' * 40, 'b' * 40, 'refs/heads/main')
+        paths = list(self.DISPLAY_PATHS) + ['docs/example.md']
+        self.assertEqual(classify(paths), classify(list(reversed(paths)) + paths))
+
+    def test_display_errors_remain_fail_closed(self):
+        for raw in (b'', b'M\0incomplete', b'X\0prototype/hybrid-display/a.py\0', b'M\0\xff\0'):
+            with self.subTest(raw=raw), patch.object(self.policy, 'git', side_effect=lambda repo, *args:
+                    raw if args[0] == 'diff' else b''):
+                result = self.policy.classify(self.repo, 'push', 'a' * 40, 'b' * 40, 'refs/heads/main')
+                self.assertTrue(result['blocking'])
+                for key in ('run_tests', 'build_container', 'release_candidate', 'run_iso'):
+                    self.assertFalse(result[key])
+        with patch.object(self.policy, 'git', side_effect=ValueError('unverifiable or divergent base')):
+            result = self.policy.classify(self.repo, 'push', 'a' * 40, 'b' * 40, 'refs/heads/main')
+            self.assertTrue(result['blocking'])
+
+    def test_display_workflow_gates_support_tests_only(self):
+        self.write(self.DISPLAY_PATHS[0], 'change')
+        head = self.commit()
+        workflow = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())
+        jobs = workflow['jobs']
+        for event in ('push', 'pull_request', 'workflow_dispatch'):
+            result = self.policy.classify(self.repo, event, self.base, head, 'refs/heads/main')
+            values = {'github.event_name': event, 'github.ref': 'refs/heads/main',
+                      'needs.classify.result': 'success', 'needs.tests.result': 'success',
+                      'needs.container.result': 'skipped'}
+            values.update({'needs.classify.outputs.' + key: str(result[key]).lower()
+                           for key in ('blocking', 'run_tests', 'build_container', 'release_candidate')})
+            for job, expected in (('tests', True), ('container', False), ('publish', False)):
+                # These checked-in gates are conjunctions of literal equality tests.
+                terms = [term.strip().split(' == ') for term in jobs[job]['if'].split('&&')]
+                self.assertTrue(all(len(term) == 2 for term in terms))
+                enabled = all(values[left] == right.strip("'") for left, right in terms)
+                self.assertEqual(enabled, expected, (event, job))
+        from tests.test_build_provenance import WorkflowPolicyContracts
+        WorkflowPolicyContracts.setUpClass()
+        contracts = WorkflowPolicyContracts()
+        contracts.test_result_rejects_required_failures_and_accepts_intentional_skip()
+        contracts.test_iso_workflow_has_only_manual_trigger()
 
     def test_nul_parser_rejects_incomplete_or_invalid_records(self):
         self.assertEqual(self.policy.parse_diff(b'A\0build_files/a b\0'),
