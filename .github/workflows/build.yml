@@ -2,192 +2,226 @@
 name: Build container image
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   push:
-    branches:
-      - main
-    paths-ignore:
-      - '**/README.md'
+    branches: [main]
   workflow_dispatch:
 
-env:
-  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
+permissions:
+  contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}-${{ inputs.brand_name}}-${{ inputs.stream_name }}
-  cancel-in-progress: true
+env:
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 jobs:
-  build_push:
-    name: Build and push image
+  classify:
     runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      blocking: ${{ steps.policy.outputs.blocking }}
+      run_tests: ${{ steps.policy.outputs.run_tests }}
+      build_container: ${{ steps.policy.outputs.build_container }}
+      release_candidate: ${{ steps.policy.outputs.release_candidate }}
+    steps:
+      - name: Checkout selected source and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Classify changes
+        id: policy
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json, os, subprocess, sys
+          event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          head = git('rev-parse', 'HEAD')
+          if head != os.environ['EXPECTED_HEAD']:
+              sys.exit('Checkout does not match event head')
+          if os.environ['EVENT'] == 'pull_request':
+              base = git('merge-base', event['pull_request']['base']['sha'], head)
+          elif os.environ['EVENT'] == 'push':
+              base = event['before']
+              if event['after'] != head:
+                  sys.exit('Push after SHA does not match checkout')
+          else:
+              # Dispatch validates the selected complete source tree. Its last
+              # commit is classified, but cannot become a release candidate.
+              base = git('rev-parse', head + '^')
+          subprocess.run([sys.executable, '-B', 'scripts/classify-container-changes.py',
+                          '--event', os.environ['EVENT'], '--ref', os.environ['REF'],
+                          '--base', base, '--head', head,
+                          '--github-output', os.environ['GITHUB_OUTPUT']], check=True)
+          PY
 
+  tests:
+    needs: classify
+    if: needs.classify.outputs.blocking == 'false' && needs.classify.outputs.run_tests == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+      - name: Check Just syntax
+        run: just check
+      - name: Run provenance and policy tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s tests -v
+
+  container:
+    needs: [classify, tests]
+    if: needs.classify.outputs.blocking == 'false' && needs.classify.outputs.build_container == 'true' && needs.tests.result == 'success'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    concurrency:
+      group: container-validation-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+      - name: Validate container build and rechunk
+        run: |
+          set -euo pipefail
+          image=$(just image_name)
+          tag=$(just generate-default-tag)
+          just build "$image" "$tag"
+          just ostree-rechunk "$image" "$tag"
+
+  publish:
+    needs: [classify, tests, container]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.classify.result == 'success' && needs.classify.outputs.blocking == 'false' && needs.classify.outputs.release_candidate == 'true' && needs.tests.result == 'success' && needs.container.result == 'success'
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
-      id-token: write
-
+    concurrency:
+      group: container-publication-${{ github.repository }}
+      cancel-in-progress: false
     steps:
-      # These stage versions are pinned by https://github.com/renovatebot/renovate
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
+        with:
+          persist-credentials: false
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3
+      - name: Prepare image environment
+        run: |
+          set -euo pipefail
+          image=$(just image_name)
+          echo "IMAGE_NAME=${image,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> "$GITHUB_ENV"
+          echo "DEFAULT_TAG=$(just generate-default-tag)" >> "$GITHUB_ENV"
+      - name: Check immutable release tag before release build
+        run: |
+          set -euo pipefail
+          VERSION_TAG=$(python3 scripts/build-version.py)
+          python3 scripts/check-version-tag.py "${IMAGE_REGISTRY}/${IMAGE_NAME}" "$VERSION_TAG"
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
-
-      - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
-
-      - name: Check Just Syntax
-        shell: bash
+      - name: Build release image
         run: |
-          just check
-
-      - name: Run provenance tests
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          python3 -m unittest discover -s tests -v
-
-      - name: Image Name
-        id: image-name
-        run: |
-          IMAGE_NAME=$(just image_name)
-
-          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
-
-      - name: Default Tag
-        id: gen-default-tag
-        run: |
-          DEFAULT_TAG=$(just generate-default-tag)
-
-          echo "DEFAULT_TAG=${DEFAULT_TAG}" >> $GITHUB_ENV
-
-      - name: Prepare environment
-        run: |
-          # Lowercase the image uri https://github.com/macbre/push-to-ghcr/issues/12
-          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
-          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
-
-      - name: Check immutable release tag
-        run: |
-          VERSION_TAG=$(python3 scripts/build-version.py)
-          python3 scripts/check-version-tag.py \
-            "${IMAGE_REGISTRY}/${IMAGE_NAME}" \
-            "${VERSION_TAG}"
-
-      # This actually builds the container image
-      - name: Build Image
-        id: build-image
-        run: |
-          just build \
-            ${IMAGE_NAME} \
-            ${DEFAULT_TAG}
-
-      # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
-        id: rechunk
-        run: |
-          just ostree-rechunk \
-            ${IMAGE_NAME} \
-            ${DEFAULT_TAG}
-
-      # If you are feeling adventurous, use the new distro agnostic rechunker
-      # https://github.com/coreos/chunkah
-      # You can delete the Rechunk with rpm-ostree portion then if you use this
-      #- name: Rechunk with Chunkah
-      #  id: rechunk
-      #  run: |
-      #    just rechunk \
-      #      ${IMAGE_NAME} \
-      #      ${DEFAULT_TAG}
-
-      - name: Generate Build Tags
-        id: gen-build-tags
-        run: |
-          alias_tags="$(just generate-build-tags \
-                        ${IMAGE_NAME} \
-                        ${DEFAULT_TAG})"
-
-          echo "Tags for this Action..."
-          echo "${alias_tags}"
-          echo "alias_tags=${alias_tags}" >> $GITHUB_OUTPUT
-
-      - name: Tag Image
-        id: tag-images
-        env:
-          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
-        run: |
-          just tag-images \
-            "${IMAGE_NAME}" \
-            "${DEFAULT_TAG}" \
-            "${ALIAS_TAGS}"
-
-      # These `if` statements are so that pull requests for your custom images do not make it publish any packages under your name without you knowing
-      # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
+          set -euo pipefail
+          just build "$IMAGE_NAME" "$DEFAULT_TAG"
+          just ostree-rechunk "$IMAGE_NAME" "$DEFAULT_TAG"
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push To GHCR
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        id: push-image
-        env:
-          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
-        run: |
-          set -euox pipefail
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
-          done
-
-          digest=$(< /tmp/digestfile)
-
-          echo "digest=${digest}" >> $GITHUB_OUTPUT
-
-      # This section is optional and only needs to be enabled if you plan on distributing
-      # your project for others to consume. You will need to create a public and private key
-      # using Cosign and save the private key as a repository secret in Github for this workflow
-      # to consume. For more details, review the image signing section of the README.
       - name: Install Cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
         with:
-          # be careful when upgrading major versions
-          cosign-release: 'v3.1.4'
-
-      - name: Sign container image
-        id: sign-image
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+          cosign-release: v3.1.4
+      - name: Publish version, sign, verify, then promote
         env:
-          COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          DIGEST: ${{ steps.push-image.outputs.digest }}
         run: |
           set -euo pipefail
-          # https://github.com/containers/container-libs/issues/388
-          # https://github.com/coreos/rpm-ostree/issues/5509
-          # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          # Import the existing unencrypted PKCS#8 secret into Cosign's native
-          # encrypted key container. The conversion happens only in a private
-          # temporary directory and the source key is never printed.
           umask 077
-          key_dir="$(mktemp -d)"
-          trap 'rm -rf "${key_dir}"' EXIT
-          printf '%s' "${COSIGN_PRIVATE_KEY}" > "${key_dir}/source.key"
-
+          : "${COSIGN_PRIVATE_KEY:?Signing key required}"
+          VERSION_TAG=$(python3 scripts/build-version.py)
+          # No write to the registry is permitted before this second check.
+          python3 scripts/check-version-tag.py "${IMAGE_REGISTRY}/${IMAGE_NAME}" "$VERSION_TAG"
+          key_dir=$(mktemp -d)
+          trap 'rm -rf "$key_dir"' EXIT
+          podman push --digestfile="$key_dir/digest" "$IMAGE_NAME:$DEFAULT_TAG" \
+            "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION_TAG}"
+          digest=$(cat "$key_dir/digest")
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'Invalid pushed digest' >&2; exit 1; }
+          reference="${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}"
+          printf '%s' "$COSIGN_PRIVATE_KEY" > "$key_dir/source.key"
           (
-            cd "${key_dir}"
+            cd "$key_dir"
             COSIGN_PASSWORD="" cosign import-key-pair --key source.key
           )
+          COSIGN_PASSWORD="" cosign sign -y --new-bundle-format=false \
+            --use-signing-config=false --key "$key_dir/import-cosign.key" "$reference"
+          cosign verify --key cosign.pub "$reference"
+          # Publish aliases from the verified remote digest, never from a second build.
+          aliases=$(just generate-build-tags "$IMAGE_NAME" "$DEFAULT_TAG")
+          for tag in $aliases; do
+            [[ "$tag" == "$VERSION_TAG" ]] && continue
+            [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || exit 1
+            skopeo copy --all --preserve-digests "docker://$reference" \
+              "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:$tag"
+          done
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-          COSIGN_PASSWORD="" cosign sign -y \
-            --new-bundle-format=false \
-            --use-signing-config=false \
-            --key "${key_dir}/import-cosign.key" \
-            ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
-
+  result:
+    needs: [classify, tests, container, publish]
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions: {}
+    steps:
+      - name: Require successful necessary jobs
+        env:
+          CLASSIFY: ${{ needs.classify.result }}
+          BLOCKING: ${{ needs.classify.outputs.blocking }}
+          TESTS: ${{ needs.tests.result }}
+          BUILD: ${{ needs.classify.outputs.build_container }}
+          CONTAINER: ${{ needs.container.result }}
+          RELEASE: ${{ needs.classify.outputs.release_candidate }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          set -euo pipefail
+          [[ "$CLASSIFY" == success && "$BLOCKING" == false ]] || {
+            echo 'Blocked: classification failed or unknown paths; inspect classify JSON.' >&2; exit 1;
+          }
+          [[ "$TESTS" == success ]] || { echo 'Required tests failed' >&2; exit 1; }
+          if [[ "$BUILD" == true ]]; then
+            [[ "$CONTAINER" == success ]] || { echo 'Required validation build failed' >&2; exit 1; }
+          else
+            [[ "$CONTAINER" == skipped ]] || exit 1
+          fi
+          if [[ "$RELEASE" == true ]]; then
+            [[ "$PUBLISH" == success ]] || { echo 'Release failed; inspect tag/signature state' >&2; exit 1; }
+            echo 'Release and digest signature verification succeeded.'
+          else
+            [[ "$PUBLISH" == skipped ]] || exit 1
+            echo 'Validation succeeded; publication intentionally skipped.'
+          fi
