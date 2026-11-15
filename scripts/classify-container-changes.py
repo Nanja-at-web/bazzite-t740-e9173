@@ -26,6 +26,8 @@ def path_class(path):
         return 'E'
     if path.startswith('prototype/hybrid-focus/') or re.fullmatch(r'tests/test_hybrid_focus_[^/]+\.py', path):
         return 'F'
+    if path.startswith('prototype/hybrid-display/') or re.fullmatch(r'tests/test_hybrid_display_[^/]+\.py', path):
+        return 'H'
     return 'G'
 
 
@@ -112,15 +114,21 @@ def classify(repo, event, base, head, ref):
                     result['paths'].setdefault(category, []).append(path)
                     result['reasons'].append(f'{category}: {status} {path}')
         result['paths'] = {key: sorted(set(value)) for key, value in sorted(result['paths'].items())}
+        result['reasons'] = sorted(set(result['reasons']))
         result['classes'] = list(result['paths'])
         result['unknown'] = result['paths'].get('G', [])
         if result['unknown']:
             raise ValueError('Unknown paths require explicit classification')
         result['run_tests'] = True
-        result['build_container'] = bool({'A', 'B'} & set(result['classes'])) or event == 'workflow_dispatch'
+        categories = set(result['classes'])
+        isolated_display = 'H' in categories and categories <= {'D', 'E', 'F', 'H'}
+        result['build_container'] = bool({'A', 'B'} & categories) or (
+            event == 'workflow_dispatch' and not isolated_display)
         result['release_candidate'] = event == 'push' and ref == 'refs/heads/main' and 'A' in result['classes']
         result['summary'] = 'Release candidate' if result['release_candidate'] else (
-            'Validation build only' if result['build_container'] else 'Tests only; container intentionally skipped')
+            'Validation build only' if result['build_container'] else (
+                'Tests only; isolated Hybrid-Display prototype/test changes; container intentionally skipped'
+                if isolated_display else 'Tests only; container intentionally skipped'))
     except (ValueError, OSError, UnicodeError) as error:
         result.update(blocking=True, run_tests=False, build_container=False,
                       release_candidate=False, summary='Blocked: ' + str(error))

@@ -87,6 +87,14 @@ It never changes versions, source files or registry state.
 | E | `README.md`, `docs/**`, `AGENTS.md`, `.agents/**` | No | No |
 | F | `prototype/hybrid-focus/**`, `tests/test_hybrid_focus_*.py` | No | No |
 | G | Any unclassified path | Blocked | Blocked |
+| H | `prototype/hybrid-display/**`, `tests/test_hybrid_display_*.py` | No (H-only, including dispatch) | No |
+
+H identifies isolated Hybrid-Display prototype and repository-test changes.
+H alone, or combined only with documentation/test classes D, E and F, runs
+tests without building a container, publishing or creating an ISO. G remains
+unknown/fail-closed: H+G is blocked. A/B container requirements and A main-push
+release eligibility still take precedence in mixed changes. Classification is
+not product installation, image/release integration or hardware validation.
 
 All nonblocked classes run local software tests; no hardware acceptance test is
 invoked. Mixed classes combine requirements. `Justfile` and `image-template.env`
@@ -109,8 +117,11 @@ A complete history is checked out for classification. Missing or divergent bases
 fail closed; there is no best-effort fallback to a smaller diff.
 
 Manual dispatch classifies the selected commit against its first parent and
-validates the complete selected source tree. It always requests tests and a
-container validation build when classification succeeds. Initial commits or
+validates the complete selected source tree. It requests tests when
+classification succeeds. H-only and H combined solely with D/E/F stay tests-only;
+dispatch no longer overrides those changes into a container build. Other
+previously valid dispatch cases retain container validation, including H+C
+and real A/B inputs. Initial commits or
 unclassifiable last-commit changes block it. Dispatch is validation-only even on
 `main`; it never checks release-tag availability, signs, publishes or updates
 `latest`. PRs and pure B changes have the same no-publication boundary.
