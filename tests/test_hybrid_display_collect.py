@@ -33,6 +33,55 @@ def facts(**changes):
 
 
 class CollectTests(unittest.TestCase):
+    def assert_metaclass_container_rejected(self, field, reason):
+        calls = []
+
+        class TrapMeta(type):
+            def __eq__(cls, other):
+                calls.append('type-equality')
+                return True
+
+        class TrapList(list, metaclass=TrapMeta):
+            def __len__(self):
+                calls.append('len')
+                return super().__len__()
+
+            def __iter__(self):
+                calls.append('iter')
+                return super().__iter__()
+
+            def __getitem__(self, key):
+                calls.append('getitem')
+                return super().__getitem__(key)
+
+            def __bool__(self):
+                calls.append('bool')
+                return True
+
+            def __repr__(self):
+                calls.append('repr')
+                return 'synthetic-private'
+
+        source = facts(**{field: TrapList(['synthetic-private'])})
+        result = collect.collect_snapshot(source)
+        self.assertEqual(calls, [], 'Container must be rejected before any callback')
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, 'blocked')
+        self.assertIsNone(result.snapshot)
+        self.assertEqual(result.reasons, (reason,))
+        self.assertNotIn('synthetic-private', repr(result))
+        self.assertNotIn('synthetic-private', str(result))
+        self.assertEqual(calls, [])
+
+    def test_output_container_metaclass_never_executes_callbacks(self):
+        self.assert_metaclass_container_rejected('outputs', 'outputs_invalid')
+
+    def test_client_container_metaclass_never_executes_callbacks(self):
+        self.assert_metaclass_container_rejected('existing_clients', 'clients_invalid')
+
+    def test_capability_container_metaclass_never_executes_callbacks(self):
+        self.assert_metaclass_container_rejected('capabilities', 'capabilities_invalid')
+
     def blocked(self, source, reason=None):
         try:
             result = collect.collect_snapshot(source)

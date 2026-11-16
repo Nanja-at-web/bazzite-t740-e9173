@@ -79,7 +79,7 @@ def _valid_output(record):
 
 
 def _outputs(records, reasons):
-    if type(records) not in (tuple, list):
+    if type(records) is not tuple and type(records) is not list:
         reasons.add('outputs_invalid')
         return ()
     if len(records) > MAX_OUTPUTS:
@@ -106,7 +106,7 @@ def _outputs(records, reasons):
 
 
 def _labels(values, containers, limit, prefix, reasons):
-    if type(values) not in containers:
+    if not any(type(values) is allowed_type for allowed_type in containers):
         reasons.add(prefix + '_invalid')
         return ()
     if len(values) > limit:
