@@ -33,6 +33,19 @@ beweist keine gleichzeitige Mehrbildschirmausgabe des direkten DRM-Backends.
 | `runner` | Begrenzte Zustandsübergänge mit injizierten Prozess-/Zeitprotokollen und expliziter Eigentümerschaft; kein echter Adapter. |
 | `cli` | Reine Auswertung übergebener Argumente für `preflight` oder `plan`; kein ausführbarer Entrypoint. |
 | `diagnostics` | Festes, begrenztes Diagnoseschema mit redigierten Berichtsstrings; keine Ausgabe und kein Export. |
+| `collect` | Reiner Collector-Vertrag: validiert ausschließlich explizit übergebene, typisierte Fakten und baut einen abgetrennten `SessionSnapshot`. |
+
+`collect_snapshot(facts)` verarbeitet eine gewöhnliche Dictionary mit genau den
+neun vorhandenen Preflight-Faktfeldern. Outputs müssen bestehende `Output`- und
+`OutputIdentity`-Modelle mit vollständigen Flags und kanonischen PCI-/Connectornamen
+sein; beschreibende Metadaten müssen leer sein. Freie Beschreibungen werden abgelehnt,
+nicht still entfernt. Die Grenze beträgt 16 Outputs, 16 bestehende Clientlabels
+und drei Programmlabels (`gamescope`, `steam`, `vkcube`). Fehlende oder unbekannte
+Fakten blockieren atomar; es gibt keine Monitor-Fallbackauswahl.
+Erfolg bedeutet nur sichere Übersetzung der Fakten. Die Startentscheidung bleibt
+bei `evaluate_preflight`; der Collector wählt keine Gaming-Rolle aus.
+Es gibt weiterhin keinen Live-Collector oder Linux-Adapter und keinen Hardwaretest.
+Der nächste separat freizugebende Schritt ist ein allowlist-basierter Leseadapter.
 
 Es bestehen keine systemd-, Desktop-, SDDM-, Plasma-Autostart-, Decky- oder
 InputPlumber-Integrationen. Die Standardsitzung und der normale Gaming Mode
