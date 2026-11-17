@@ -26,6 +26,13 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(validate_query(bound, context).ok)
         for path in ('/session/neighbor', '', True):
             self.assertFalse(validate_query(replace(bound, object_path=path), context).ok)
+        malformed = replace(context)
+        object.__delattr__(malformed, 'session_path')
+        try:
+            result = validate_query(bound, malformed)
+        except AttributeError:
+            self.fail('Missing session_path slot must return a fixed blocked result')
+        self.assertEqual(result.reasons, ('source_not_allowed',))
 
     def test_exact_manifest_is_bounded_and_closed(self):
         good = ConnectorManifest(((0, 'DP-1'),), True)

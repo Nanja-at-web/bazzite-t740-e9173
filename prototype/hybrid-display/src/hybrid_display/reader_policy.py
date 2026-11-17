@@ -178,7 +178,8 @@ def _context_valid(context):
         return False
     try:
         values = (context.uid, context.pid, context.owners, context.client_pids,
-                  context.output_ids, context.session_bound, context.session_id)
+                  context.output_ids, context.session_bound, context.session_id,
+                  context.session_path)
     except AttributeError:
         return False
     if (not immutable(values) or not _int(context.uid, 1, 2147483647)
