@@ -154,4 +154,5 @@ class NativeTests(unittest.TestCase):
             subprocess.run(['cc', *FLAGS, '-I', str(NATIVE), '-c', str(NATIVE / 'reader_service_native.c'),
                             '-o', str(obj)], check=True, capture_output=True, timeout=30)
             symbols = subprocess.check_output(['nm', '-u', str(obj)], text=True, timeout=10)
-            self.assertTrue(all(line.split()[-1] in {'memcpy', 'memset'} for line in symbols.splitlines()), symbols)
+            # Exact compiler stack-protection runtime reference; no OS/heap API.
+            self.assertTrue(all(line.split()[-1] in {'memcpy', 'memset', '__stack_chk_fail'} for line in symbols.splitlines()), symbols)
