@@ -1,0 +1,11 @@
+{
+  "KPackageStructure": "KWin/Script",
+  "KPlugin": {
+    "Id": "hybrid-display-outer-placement",
+    "Name": "Experimental private Hybrid Display placement",
+    "Description": "Private session prototype; not installed, Same-UID authority unresolved",
+    "License": "MIT",
+    "EnabledByDefault": false
+  },
+  "X-Plasma-API": "javascript"
+}

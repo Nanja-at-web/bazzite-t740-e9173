@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Experimental Hybrid Display Outer KWin
+Comment=Not installed or live-validated; private prototype session
+Exec=/usr/bin/systemd-run --user --wait --collect --service-type=exec --unit=bazzite-hybrid-display-outer-kwin --property=KillMode=control-group --property=KillSignal=SIGTERM --property=TimeoutStopSec=5s --property=SendSIGKILL=yes --property=FinalKillSignal=SIGKILL --property=Restart=no --property=ExitType=main --property=Delegate=no --setenv=XDG_RUNTIME_DIR --setenv=XDG_SESSION_ID --setenv=XDG_SESSION_TYPE -- /usr/libexec/bazzite-hybrid-display-outer-kwin --execute
+TryExec=/usr/libexec/bazzite-hybrid-display-outer-kwin
+DesktopNames=HybridOuterKWin

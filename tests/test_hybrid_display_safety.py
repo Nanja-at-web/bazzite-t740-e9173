@@ -348,9 +348,106 @@ def wiring_violations(path, source, contract='release'):
     return [f'{path}: {contract}: hybrid-display execution reference'] if wired else []
 
 
+def outer_capability_violations(path, tree):
+    """Exact prototype exception, never a general subprocess/host exemption."""
+    errors = set()
+    parents, scopes = {}, {}
+    def visit(node, scope=''):
+        if isinstance(node, ast.ClassDef):
+            scope = node.name
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = (scope + '.' if scope else '') + node.name
+        scopes[node] = scope
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+            visit(child, scope)
+    visit(tree)
+    imports = {'sys', 'pathlib', 'argparse', 'json', 'os', 'pwd', 're', 'secrets',
+               'select', 'signal', 'stat', 'subprocess', 'time',
+               'hybrid_display.outer_session', 'hybrid_display.outer_supervisor'}
+    opens = {'directory', 'PrivateTree.create', 'PrivateTree._purge', '_System._read', '_System.receipt'}
+    spawns = {'_System.kwin', '_Child.query', '_Child.start'}
+    prohibited = {'exec', 'eval', 'compile', '__import__', 'globals', 'locals',
+                  'read_text', 'read_bytes', 'write_text', 'write_bytes', 'system',
+                  'popen', 'fork', 'kill', 'spawnv', 'spawnve', 'makedirs', 'rmtree',
+                  'rename', 'replace', 'chmod', 'chown', 'symlink'}
+    for node in ast.walk(tree):
+        scope = scopes[node]
+        if isinstance(node, ast.Attribute) and ast.unparse(node) == 'subprocess.Popen':
+            parent = parents.get(node)
+            assignment = parents.get(parent)
+            if (scope != '_System.__init__' or not isinstance(parent, ast.IfExp)
+                    or not isinstance(assignment, ast.Assign)
+                    or len(assignment.targets) != 1
+                    or ast.unparse(assignment.targets[0]) != 'self.spawn'):
+                errors.add('spawn-alias')
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = [x.name for x in node.names] if isinstance(node, ast.Import) else [node.module]
+            if any(x not in imports for x in modules) or any(x.asname for x in node.names):
+                errors.add('import')
+            if isinstance(node, ast.ImportFrom) and node.module not in {
+                    'pathlib', 'hybrid_display.outer_session', 'hybrid_display.outer_supervisor'}:
+                errors.add('import-from')
+        if isinstance(node, ast.Attribute) and ast.unparse(node.value) == 'os' and node.attr == 'environ':
+            parent = parents.get(node)
+            if not isinstance(parent, ast.Attribute) or parent.attr != 'get':
+                errors.add('whole-environment')
+        if not isinstance(node, ast.Call):
+            continue
+        callee = ast.unparse(node.func)
+        leaf = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ''
+        if leaf in prohibited or callee.startswith('subprocess.'):
+            errors.add('execution')
+        if callee == 'os.environ.get':
+            valid = False
+            if scope == '_System.child_display' and len(node.args) == 1:
+                valid = isinstance(node.args[0], ast.Constant) and node.args[0].value == 'WAYLAND_DISPLAY'
+            elif scope == '_System.__init__' and len(node.args) == 1:
+                ancestor = parents.get(node)
+                while ancestor is not None and not isinstance(ancestor, ast.DictComp):
+                    ancestor = parents.get(ancestor)
+                if isinstance(ancestor, ast.DictComp) and len(ancestor.generators) == 1:
+                    expected = "('XDG_RUNTIME_DIR', 'XDG_SESSION_ID', 'XDG_SESSION_TYPE')"
+                    valid = ast.unparse(ancestor.generators[0].iter) == expected and ast.unparse(node.args[0]) == 'k'
+            if not valid:
+                errors.add('environment-name')
+        if leaf == 'open' and (scope not in opens or callee not in {'fs.open', 'self.fs.open'}):
+            errors.add('open')
+        if leaf == 'killpg' and (scope != 'OwnedGroup.close' or callee != 'self.kernel.killpg'
+                or len(node.args) != 2 or ast.unparse(node.args[0]) != 'self.process.pid'
+                or ast.unparse(node.args[1]) not in {'signal.SIGTERM', '0'}):
+            errors.add('signal')
+        if leaf in {'mkdir', 'rmdir', 'unlink', 'link', 'write'}:
+            allowed = {'mkdir': {'PrivateTree.create'}, 'rmdir': {'PrivateTree.cleanup', 'PrivateTree._purge'},
+                       'unlink': {'PrivateTree._purge', '_System.receipt'},
+                       'link': {'_System.receipt'}, 'write': {'PrivateTree.create', '_System.receipt'}}
+            if scope not in allowed[leaf]:
+                errors.add('filesystem-write')
+        if leaf in {'spawn', 'Popen'}:
+            if (callee not in {'self.spawn', 'self.system.spawn'} or scope not in spawns
+                    or not node.args or any(k.arg is None for k in node.keywords)):
+                errors.add('spawn')
+            elif scope == '_Child.query':
+                command = node.args[0]
+                if (not isinstance(command, ast.Tuple) or len(command.elts) != 1
+                        or not isinstance(command.elts[0], ast.Constant)
+                        or command.elts[0].value != '/usr/bin/wayland-info'):
+                    errors.add('provider-command')
+            elif scope == '_System.kwin' and not (isinstance(node.args[0], ast.Call) and ast.unparse(node.args[0].func) == 'kwin_argv'):
+                errors.add('kwin-command')
+            elif scope == '_Child.start' and ast.unparse(node.args[0]) != 'argv':
+                errors.add('payload-command')
+        if any(k.arg == 'shell' and not (isinstance(k.value, ast.Constant) and k.value.value is False) for k in node.keywords):
+            errors.add('shell')
+    return [path + ': bounded-outer: ' + reason for reason in sorted(errors)]
+
+
 def product_violations(path, source):
     tree = ast.parse(source, filename=path)
     errors = set()
+    outer = path == DISPLAY + '/outer-kwin-session.py'
+    if outer:
+        errors.update(outer_capability_violations(path, tree))
     forbidden_imports = {'os', 'sys', 'subprocess', 'signal', 'socket', 'pathlib',
                          'psutil', 'threading', 'multiprocessing', 'requests', 'urllib',
                          'http', 'dbus', 'systemd', 'ctypes', 'builtins', 'importlib', 'io'}
@@ -362,15 +459,15 @@ def product_violations(path, source):
     for node in ast.walk(tree):
         modules = ([alias.name for alias in node.names] if isinstance(node, ast.Import)
                    else [node.module or ''] if isinstance(node, ast.ImportFrom) else [])
-        if any(module.split('.')[0] in forbidden_imports for module in modules):
+        if not outer and any(module.split('.')[0] in forbidden_imports for module in modules):
             errors.add(f'{path}: pure-library: forbidden host import')
         if any(re.search(r'(?i)hybrid[-_]focus|inputplumber|decky', module) for module in modules):
             errors.add(f'{path}: no-focus: focus, profile or Decky import')
         if isinstance(node, ast.Call):
             name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else ''
-            if name in forbidden_calls:
+            if not outer and name in forbidden_calls:
                 errors.add(f'{path}: pure-library: host or dynamic execution call')
-        if isinstance(node, ast.If) and any(
+        if not outer and isinstance(node, ast.If) and any(
                 isinstance(value, ast.Constant) and value.value == '__main__' for value in ast.walk(node.test)):
             errors.add(f'{path}: no-launcher: Python main guard')
     functional = python_content(source)
@@ -393,7 +490,7 @@ def launcher_violations(paths, executable=()):
                 or name in {'install-user.sh', 'uninstall-user.sh', 'pyproject.toml',
                             'setup.py', 'setup.cfg', 'package.json'}
                 or path.endswith(('.service', '.socket', '.timer', '.target', '.desktop'))
-                or path in executable):
+                or path in executable and path != 'outer-kwin-session.py'):
             errors.append(f'{DISPLAY}/{path}: no-launcher: installable or executable artifact')
     return errors
 
@@ -577,6 +674,38 @@ class RepositoryRegressionTests(unittest.TestCase):
 
 
 class StructuralFixtures(unittest.TestCase):
+    def test_only_exact_outer_launcher_has_bounded_host_capabilities(self):
+        path = DISPLAY + '/outer-kwin-session.py'
+        source = read_repo(path)
+        self.assertEqual(product_violations(path, source), [])
+        self.assertTrue(product_violations(DISPLAY + '/outer-kwin-session-copy.py', source))
+        self.assertEqual(launcher_violations(['outer-kwin-session.py'], ['outer-kwin-session.py']), [])
+
+    def test_outer_exception_rejects_free_commands_signals_and_environment(self):
+        path = DISPLAY + '/outer-kwin-session.py'
+        source = read_repo(path)
+        for unsafe in (source + '\nsubprocess.run(["/bin/sh", "-c", "bad"])\n',
+                       source + '\nenv = dict(os.environ)\n',
+                       source.replace("('/usr/bin/wayland-info',)", "('/bin/sh',)"),
+                       source.replace("('/usr/bin/wayland-info',)", 'request'),
+                       source.replace("os.environ.get('WAYLAND_DISPLAY')", "os.environ.get('LD_PRELOAD')"),
+                       source + '\nforeign_spawn = subprocess.Popen\n',
+                       source.replace('self.kernel.killpg(self.process.pid, signal.SIGTERM)',
+                                      'self.kernel.killpg(12345, signal.SIGTERM)'),
+                       source.replace('self.kernel.killpg(self.process.pid, signal.SIGTERM)',
+                                      'self.kernel.killpg(self.process.pid, signal.SIGKILL)')):
+            try:
+                errors = product_violations(path, unsafe)
+            except (ValueError, TypeError):
+                self.fail('Unknown command shape escaped the Safety rejection boundary')
+            self.assertTrue(errors)
+
+    def test_private_kwin_resource_is_disabled_without_private_activation(self):
+        metadata = json.loads(read_repo(DISPLAY + '/session/kwin/outer-placement/metadata.json'))
+        self.assertIs(metadata['KPlugin']['EnabledByDefault'], False)
+        self.assertEqual(metadata['KPlugin']['Id'], 'hybrid-display-outer-placement')
+        self.assertTrue(launcher_violations(['session/bazzite-hybrid-display-outer-kwin.service']))
+
     def test_policy_path_rules_are_data_only_in_explicit_policy_files(self):
         source = (
             "def path_class(path):\n"
