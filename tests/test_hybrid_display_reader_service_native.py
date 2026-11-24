@@ -153,6 +153,9 @@ class NativeTests(unittest.TestCase):
             obj = Path(directory) / 'core.o'
             subprocess.run(['cc', *FLAGS, '-I', str(NATIVE), '-c', str(NATIVE / 'reader_service_native.c'),
                             '-o', str(obj)], check=True, capture_output=True, timeout=30)
-            symbols = subprocess.check_output(['nm', '-u', str(obj)], text=True, timeout=10)
+            # nm reads only the already-built temporary object. The bounded
+            # deadline still guards hangs while allowing loaded CI runners;
+            # it changes neither the symbol allowlist nor compiler hardening.
+            symbols = subprocess.check_output(['nm', '-u', str(obj)], text=True, timeout=30)
             # Exact compiler stack-protection runtime reference; no OS/heap API.
             self.assertTrue(all(line.split()[-1] in {'memcpy', 'memset', '__stack_chk_fail'} for line in symbols.splitlines()), symbols)
